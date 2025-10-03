@@ -1,46 +1,40 @@
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.agents import initialize_agent, Tool
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplat
+from langchain.memory import ConversationBufferMemory
+from langchain.agents import AgentExecutor, Tool
+from prompts import priority_prompt, summarizer_prompt, emaildraft_prompt
 
-# --- Define LLM ---
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+# Each agent can share this memory (so updates persist)
+shared_memory = ConversationBufferMemory(
+    memory_key="history", 
+    input_key="input", 
+    return_messages=True
+)
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import LLMChain
+from langchain.agents import initialize_agent
 
+llm = ChatOpenAI(model="gpt-4", temperature=0)
 
-# --- Specialist Agents ---
-
-research_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are ResearchAgent. Answer using only the WebSearch tool."),
-    ("human", "{input}")
-])
-
-coder_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are CoderAgent. Answer using only the PythonExec tool."),
-    ("human", "{input}")
-])
-
-research_agent = initialize_agent(
-    tools=[tools[0]],  # WebSearch
-    llm=llm,
-    agent="chat-conversational-react-description",
-    verbose=True
+# Priority Agent
+priority_chain = LLMChain(llm=llm, prompt=priority_prompt, memory=shared_memory)
+priority_agent = initialize_agent(
+    tools, llm, agent="chat-conversational-react-description",
+    memory=shared_memory, verbose=True
 )
 
-coder_agent = initialize_agent(
-    tools=[tools[1]],  # PythonExec
-    llm=llm,
-    agent="chat-conversational-react-description",
-    verbose=True
+# Summarizer Agent
+summarizer_chain = LLMChain(llm=llm, prompt=summarizer_prompt, memory=shared_memory)
+summarizer_agent = initialize_agent(
+    tools, llm, agent="chat-conversational-react-description",
+    memory=shared_memory, verbose=True
 )
 
-# --- Orchestrator Agent ---
-def orchestrator(task: str) -> str:
-    if "search" in task.lower():
-        return research_agent.run(task)
-    elif "calculate" in task.lower() or "python" in task.lower():
-        return coder_agent.run(task)
-    else:
-        return "Orchestrator: I don't know which agent to use."
+# Email Draft Agent
+email_chain = LLMChain(llm=llm, prompt=emaildraft_prompt, memory=shared_memory)
+email_agent = initialize_agent(
+    tools, llm, agent="chat-conversational-react-description",
+    memory=shared_memory, verbose=True
+)
 
-# --- Example Run ---
-print(orchestrator("search latest AI trends"))
-print(orchestrator("calculate 5+12"))
