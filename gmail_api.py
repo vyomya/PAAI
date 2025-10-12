@@ -10,6 +10,11 @@ from email.utils import parsedate_to_datetime
 # If modifying scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+
+
 def get_service():
     creds = None
     # Load existing credentials
@@ -27,7 +32,9 @@ def get_service():
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
     return build('gmail', 'v1', credentials=creds)
-def list_messages(service, query ='', user_id='me', label_ids=[]):
+
+
+def list_messages(query ='', user_id='me', label_ids=[]):
     """List all Messages Ids of the user's mailbox matching query.
     Arguments:
     service -- Authorized Gmail API service instance.
@@ -41,13 +48,14 @@ def list_messages(service, query ='', user_id='me', label_ids=[]):
     Response:
     List of Messages that match the criteria of the query. Note that the returned list contains Message IDs and threadID, not the Messages themselves.
     """
+    service = get_service()
     query = f'{query}'
     results = service.users().messages().list(userId=user_id, labelIds=label_ids, q=query).execute()
     messages = results.get('messages', [])
     return messages
 
 
-def get_message(service, msg_id, user_id='me'):
+def get_message(msg_id, user_id='me'):
     """Get a Message and extract useful fields
     Arguments:
     service -- Authorized Gmail API service instance.
@@ -57,6 +65,7 @@ def get_message(service, msg_id, user_id='me'):
     Response:
     A dictionary containing id, snippet, from, to, subject, date, body of the email.
     """
+    service = get_service()
     message = service.users().messages().get(userId=user_id, id=msg_id, format='full').execute()
 
     headers = message['payload']['headers']

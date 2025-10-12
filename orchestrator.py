@@ -1,30 +1,55 @@
-from langchain.chains.router import MultiPromptChain, RouterChain
-from langchain.chains.router.llm_router import LLMRouterChain, RouterOutputParser
-from langchain_openai import ChatOpenAI
-from prompts import orchestrator_prompt, priority_prompt, summarizer_prompt, emaildraft_prompt
-from agentic_framework import priority_chain, summarizer_chain, email_chain
+from langchain.chains import LLMChain
+from langchain_community.chat_models import ChatOllama
+from prompts import orchestrator_prompt
+from agentic_framework import priority_agent, summarizer_agent, email_agent
+from langchain.memory import ConversationBufferMemory
 
-# Router prompts
-destinations = {
-    "priority": priority_prompt.template,
-    "summarizer": summarizer_prompt.template,
-    "email": emaildraft_prompt.template,
-}
 
 # Build router
 
-llm = ChatOpenAI(model="gpt-4", temperature=0)
+llm = ChatOllama(model="mistral", temperature=0)
 
-router_chain = LLMRouterChain.from_llm(llm, orchestrator_prompt)
-
+shared_memory = ConversationBufferMemory(
+    memory_key="history",
+    return_messages=True
+)
 # Combine everything into a MultiPromptChain
-orchestrator = MultiPromptChain(
-    router_chain=router_chain,
-    destination_chains={
-        "priority": priority_chain,
-        "summarizer": summarizer_chain,
-        "email": email_chain
-    },
-    default_chain=summarizer_chain,  # fallback
+orchestrator = LLMChain(
+    llm=llm,
+    prompt=orchestrator_prompt,
+    memory=shared_memory,
     verbose=True
 )
+import json
+
+def orchestrate(user_input):
+    router_output = orchestrator.run(user_input)
+    print(f"Router raw output:\n{router_output}\n")
+
+    # Try to parse JSON
+    try:
+        route = json.loads(router_output)
+        destination = route.get("destination", "").lower()
+    except json.JSONDecodeError:
+        print("Router output not valid JSON. Defaulting to summarizer.")
+        destination = "summarizer"
+
+    # Dispatch
+    if destination == "priority":
+        result = priority_agent.run(user_input)
+    elif destination == "emaildraft":
+        result = email_agent.run(user_input)
+    elif destination == "summarizer":
+        result = summarizer_agent.run(user_input)
+    else:
+        print(f"Unknown destination '{destination}'. Defaulting to summarizer.")
+        result = summarizer_agent.run(user_input)
+
+    return result
+
+
+if __name__ == "__main__":
+    # Example usage
+    user_input = "Summarize my recent emails and create a todo list."
+    response = orchestrate(user_input)
+    print(response)

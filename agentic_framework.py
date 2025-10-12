@@ -1,40 +1,86 @@
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode, create_react_agent
+from langchain_community.chat_models import ChatOllama
+from tool import tools
+from prompts import priority_prompt, summarizer_prompt, emaildraft_prompt, orchestrator_prompt
+from typing import TypedDict
+
 from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplat
-from langchain.memory import ConversationBufferMemory
-from langchain.agents import AgentExecutor, Tool
-from prompts import priority_prompt, summarizer_prompt, emaildraft_prompt
-
-# Each agent can share this memory (so updates persist)
-shared_memory = ConversationBufferMemory(
-    memory_key="history", 
-    input_key="input", 
-    return_messages=True
+llm = ChatOpenAI(
+    api_key="ollama",
+    model="gemma3",
+    base_url="http://localhost:11434/v1",
 )
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import LLMChain
-from langchain.agents import initialize_agent
+# Define specialized agents
+priority_agent = create_react_agent(
+    model=llm,
+    prompt=priority_prompt,
+    tools=tools,
 
-llm = ChatOpenAI(model="gpt-4", temperature=0)
-
-# Priority Agent
-priority_chain = LLMChain(llm=llm, prompt=priority_prompt, memory=shared_memory)
-priority_agent = initialize_agent(
-    tools, llm, agent="chat-conversational-react-description",
-    memory=shared_memory, verbose=True
 )
 
-# Summarizer Agent
-summarizer_chain = LLMChain(llm=llm, prompt=summarizer_prompt, memory=shared_memory)
-summarizer_agent = initialize_agent(
-    tools, llm, agent="chat-conversational-react-description",
-    memory=shared_memory, verbose=True
+email_agent = create_react_agent(
+    model=llm,
+    prompt=emaildraft_prompt,
+    tools=tools,
+
 )
 
-# Email Draft Agent
-email_chain = LLMChain(llm=llm, prompt=emaildraft_prompt, memory=shared_memory)
-email_agent = initialize_agent(
-    tools, llm, agent="chat-conversational-react-description",
-    memory=shared_memory, verbose=True
+summarizer_agent = create_react_agent(
+    model=llm,
+    prompt=summarizer_prompt,
+    tools=tools
 )
+
+# Define orchestrator
+orchestrator = create_react_agent(
+    model=llm,
+    prompt=orchestrator_prompt,
+    tools=[]# Orchestrator does not use tools directly
+)
+
+
+def evaluation_node(state):
+    result = state["last_output"]
+    user_goal = state["user_goal"]
+    llm = llm
+    eval_prompt = f"""
+    You are an Evaluator.
+    Determine if this result satisfies the user's goal.
+    User goal: {user_goal}
+    Agent output: {result}
+    Respond with 'yes' or 'no'.
+    """
+    verdict = llm.invoke(eval_prompt).content.lower()
+    return {"satisfied": "yes" in verdict}
+class AgentState(TypedDict):
+    input: str
+    output: str
+# Create flow graph
+graph = StateGraph(
+    state_schema=AgentState
+)
+graph.add_node("orchestrator", orchestrator)
+graph.add_node("priority_agent", priority_agent)
+graph.add_node("email_agent", email_agent)
+graph.add_node("summarizer_agent", summarizer_agent)
+graph.add_node("evaluate", evaluation_node)
+
+graph.add_edge("orchestrator", "priority_agent")
+graph.add_edge("orchestrator", "email_agent")
+graph.add_edge("orchestrator", "summarizer_agent")
+graph.add_edge("priority_agent", "evaluate")
+graph.add_edge("email_agent", "evaluate")
+graph.add_edge("summarizer_agent", "evaluate")
+graph.add_conditional_edges(
+    "evaluate",
+    lambda state: "END" if state["satisfied"] else "orchestrator",
+    {"END": END, "orchestrator": "orchestrator"}
+)
+
+graph.set_entry_point("orchestrator")
+
+app = graph.compile()
+result = app.invoke({"input": "Generate a report on last month's sales"})
+print(result)
 
