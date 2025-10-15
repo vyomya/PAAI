@@ -8,7 +8,7 @@ from typing import TypedDict
 from langchain_openai import ChatOpenAI
 llm = ChatOpenAI(
     api_key="ollama",
-    model="gemma3",
+    model="llama3:8b",
     base_url="http://localhost:11434/v1",
 )
 # Define specialized agents
