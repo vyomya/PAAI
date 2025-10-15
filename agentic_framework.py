@@ -81,6 +81,6 @@ graph.add_conditional_edges(
 graph.set_entry_point("orchestrator")
 
 app = graph.compile()
-result = app.invoke({"input": "Generate a report on last month's sales"})
+result = app.invoke({"input": "Summarize last week's email and provide a todo list."})
 print(result)
 
