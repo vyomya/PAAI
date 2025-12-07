@@ -1,117 +1,166 @@
-
-import os.path
+import os
+import json
 import base64
+from email.utils import parsedate_to_datetime
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from email.utils import parsedate_to_datetime
 
-# If modifying scopes, delete the file token.json.
+
+# Gmail scope
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
-
-
+# ---------------------------------------------------------
+# 1. AUTHENTICATION / SERVICE INITIALIZATION
+# ---------------------------------------------------------
 def get_service():
     creds = None
-    # Load existing credentials
+
+    # If token exists, load it
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    # If no valid credentials, let user log in
+
+    # If no valid token → login
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
+                'credentials.json',
+                SCOPES
+            )
             creds = flow.run_local_server(port=0)
-        # Save credentials for future use
+
+        # Save token
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
+
     return build('gmail', 'v1', credentials=creds)
 
 
-def list_messages(query ='', user_id='me', label_ids=[]):
-    """List all Messages Ids of the user's mailbox matching query.
-    Arguments:
-    service -- Authorized Gmail API service instance.
-    query -- String used to filter messages returned.
-             Eg.- 'from:user@some_domain.com is:unread' for Messages from a particular sender. 
-             Eg.- 'after:2025/09/16 before:2025/09/18' for Messages in a particular date range.
-    user_id -- User's email address. The special value "me"
-               can be used to indicate the authenticated user.
-    label_ids -- Only return Messages with these labelIds applied. eg. ['INBOX']
-
-    Response:
-    List of Messages that match the criteria of the query. Note that the returned list contains Message IDs and threadID, not the Messages themselves.
+# ---------------------------------------------------------
+# 2. RAW GMAIL FUNCTIONS
+# ---------------------------------------------------------
+def list_messages(query='', user_id='me', label_ids=None):
     """
+    Returns list of message metadata (IDs only).
+    """
+    if label_ids is None:
+        label_ids = []
+
     service = get_service()
-    query = f'{query}'
-    results = service.users().messages().list(userId=user_id, labelIds=label_ids, q=query).execute()
-    messages = results.get('messages', [])
-    return messages
+
+    response = service.users().messages().list(
+        userId=user_id,
+        labelIds=label_ids,
+        q=query
+    ).execute()
+
+    return response.get('messages', [])
 
 
 def get_message(msg_id, user_id='me'):
-    """Get a Message and extract useful fields
-    Arguments:
-    service -- Authorized Gmail API service instance.
-    msg_id -- The ID of the Message required.
-    user_id -- User's email address. The special value "me"
-                can be used to indicate the authenticated user.
-    Response:
-    A dictionary containing id, snippet, from, to, subject, date, body of the email.
+    """
+    Returns detailed email content (subject, from, date, body, etc.)
     """
     service = get_service()
-    message = service.users().messages().get(userId=user_id, id=msg_id, format='full').execute()
 
-    headers = message['payload']['headers']
-    msg_data = {"id": msg_id, "snippet": message.get('snippet')}
+    msg = service.users().messages().get(
+        userId=user_id,
+        id=msg_id,
+        format='full'
+    ).execute()
 
-    # Extract common headers
+    headers = msg.get('payload', {}).get('headers', [])
+    msg_data = {"id": msg_id, "snippet": msg.get('snippet')}
+
+    # Extract useful headers
     for h in headers:
         name = h['name'].lower()
-        if name == 'from':
-            msg_data['from'] = h['value']
-        elif name == 'to':
-            msg_data['to'] = h['value']
-        elif name == 'subject':
-            msg_data['subject'] = h['value']
-        elif name == 'date':
-            # Convert to datetime
-            msg_data['date'] = parsedate_to_datetime(h['value'])
+        value = h['value']
 
-    # Extract body (simple case: text/plain)
+        if name == 'from':
+            msg_data['from'] = value
+        elif name == 'to':
+            msg_data['to'] = value
+        elif name == 'subject':
+            msg_data['subject'] = value
+        elif name == 'date':
+            try:
+                msg_data['date'] = str(parsedate_to_datetime(value))
+            except:
+                msg_data['date'] = value
+
+    # Extract simple text body
     body = None
+    payload = msg.get('payload', {})
+
     try:
-        parts = message['payload']['parts']
+        parts = payload.get('parts', [])
         for part in parts:
-            if part['mimeType'] == 'text/plain':
-                body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
-    except:
+            if part.get('mimeType') == 'text/plain':
+                data = part.get('body', {}).get('data', '')
+                body = base64.urlsafe_b64decode(data).decode('utf-8')
+    except Exception:
         pass
+
     msg_data['body'] = body
 
     return msg_data
 
 
-if __name__ == '__main__':
-    service = get_service()
+# ---------------------------------------------------------
+# 3. LLM-FRIENDLY TOOL WRAPPERS (Single-string JSON input)
+# ---------------------------------------------------------
+def list_messages_tool(json_str):
+    """
+    Expected input JSON string:
+    {
+        "query": "from:abc@gmail.com",
+        "user_id": "me",
+        "label_ids": ["INBOX"]
+    }
+    """
+    try:
+        params = json.loads(json_str)
+    except:
+        return json.dumps({"error": "Invalid JSON input"})
 
-    # Get INBOX (incoming mails)
-    inbox_msgs = list_messages(service, label_ids=['INBOX'])
-    print("Inbox emails:")
-    print(inbox_msgs[0])
-    print(len(inbox_msgs))
-    
-    for m in inbox_msgs[:5]:  # limit to first 5
-        print(get_message(service, m['id']))
+    query = params.get("query", "")
+    user_id = params.get("user_id", "me")
+    label_ids = params.get("label_ids", [])
 
-    # Get SENT (outgoing mails)
-    sent_msgs = list_messages(service, label_ids=['SENT'])
-    print("\nSent emails:")
-    for m in sent_msgs[:5]:
-        print(get_message(service, m['id']))
+    try:
+        msgs = list_messages(query=query, user_id=user_id, label_ids=label_ids)
+        return json.dumps(msgs)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def get_message_tool(json_str):
+    """
+    Expected input JSON string:
+    {
+        "msg_id": "...",
+        "user_id": "me"
+    }
+    """
+    try:
+        params = json.loads(json_str)
+    except:
+        return json.dumps({"error": "Invalid JSON input"})
+
+    if "msg_id" not in params:
+        return json.dumps({"error": "msg_id is required"})
+
+    msg_id = params["msg_id"]
+    user_id = params.get("user_id", "me")
+
+    try:
+        message = get_message(msg_id=msg_id, user_id=user_id)
+        return json.dumps(message)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
