@@ -1,38 +1,17 @@
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
+from llm import llm, llm_with_tools
 from typing import TypedDict
 from tool import tools
 import json
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-f = open('openAIkey.txt', 'r')
-api_key = f.read().strip()
-f.close() 
-llm = ChatOpenAI(
-    api_key=api_key,
-    model="gpt-4o-mini",
-    temperature=0,
-    max_retries=0,
-)
+from langchain_core.messages import  HumanMessage, SystemMessage
+from prompts import orchestrator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt
 
-# Bind tools to model
-llm_with_tools = llm.bind_tools(tools)
-
-
-# ---- AGENT NODES ----
 def orchestrator_node(state):
     """Routes user request to appropriate specialist"""
     user_input = state.get("input", "")
     
-    system_prompt = """You are an orchestrator that routes requests to specialists.
-
-Available specialists:
-- "summarizer" - for summarizing emails and extracting todos
-- "priority" - for prioritizing tasks  
-- "email" - for drafting emails
-
-Respond with ONLY a JSON object:
-{"destination": "<summarizer|priority|email>", "next_inputs": "<clear instruction>"}"""
+    system_prompt = orchestrator_prompt
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -50,11 +29,11 @@ Respond with ONLY a JSON object:
 
 
 def create_agent_node(agent_name, system_prompt):
-    """Factory function to create agent nodes"""
+    
     tool_node = ToolNode(tools=tools)
     
     def agent_node(state):
-        # Parse input from orchestrator
+
         orchestrator_output = state.get("output", "")
         try:
             parsed = json.loads(orchestrator_output)
@@ -66,7 +45,6 @@ def create_agent_node(agent_name, system_prompt):
         print(f"[{agent_name.upper()}] Input: {agent_input}")
         print(f"{'='*60}\n")
         
-        # Create initial messages
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=agent_input)
@@ -75,23 +53,20 @@ def create_agent_node(agent_name, system_prompt):
         tools_used = []
         max_iterations = 10
         
-        for iteration in range(max_iterations):
-            # Call model
+        for _ in range(max_iterations):
+            
             response = llm_with_tools.invoke(messages)
             messages.append(response)
             
-            # Check for tool calls
             if not response.tool_calls:
-                # No more tool calls, we're done
+                
                 break
             
             print(f"[{agent_name.upper()}] Tool calls: {[tc['name'] for tc in response.tool_calls]}")
             
-            # Execute tools
             for tool_call in response.tool_calls:
                 tools_used.append(tool_call['name'])
                 
-                # Find and execute the tool
                 tool_name = tool_call['name']
                 tool_args = tool_call['args']
                 
@@ -99,7 +74,6 @@ def create_agent_node(agent_name, system_prompt):
                 for tool in tools:
                     if tool.name == tool_name:
                         try:
-                            # Convert args to JSON string for our tools
                             tool_input = json.dumps(tool_args)
                             tool_result = tool.func(tool_input)
                             print(f"[{agent_name.upper()}] Tool {tool_name} result: {tool_result[:200]}...")
@@ -111,14 +85,12 @@ def create_agent_node(agent_name, system_prompt):
                 if tool_result is None:
                     tool_result = json.dumps({"error": f"Tool {tool_name} not found"})
                 
-                # Add tool result to messages
                 from langchain_core.messages import ToolMessage
                 messages.append(ToolMessage(
                     content=tool_result,
                     tool_call_id=tool_call['id']
                 ))
         
-        # Get final response
         final_content = messages[-1].content if messages else ""
         
         print(f"\n{'='*60}")
@@ -134,67 +106,22 @@ def create_agent_node(agent_name, system_prompt):
     return agent_node
 
 
-# Create specialist agents
-from datetime import datetime, timedelta
-last_week_date = (datetime.now() - timedelta(days=7)).strftime('%Y/%m/%d')
-
 summarizer_agent = create_agent_node(
     "summarizer",
-    f"""You are an email summarization specialist with Gmail tools.
-
-**IMPORTANT: You have these tools - USE THEM:**
-- FetchEmails: Gets list of emails (returns message IDs)
-- GetEmailDetails: Gets full content of a specific email
-
-**YOUR PROCESS:**
-1. Call FetchEmails to get email list
-2. Call GetEmailDetails for each message ID
-3. Summarize and extract todos
-
-**Tool Input Examples:**
-- FetchEmails: {{"query": "after:{last_week_date}", "label_ids": ["INBOX"]}}
-- GetEmailDetails: {{"msg_id": "actual_message_id"}}
-
-For "last week" use: after:{last_week_date}
-
-After getting emails, provide:
-**Summary:** [Overview]
-**Todo List:**
-- [ ] Task 1 (Priority: High)
-- [ ] Task 2 (Priority: Medium)"""
+    summarizer_prompt
 )
 
 priority_agent = create_agent_node(
     "priority",
-    """You are a task prioritization specialist.
-
-Prioritize tasks by:
-- Urgency (deadlines)
-- Importance (impact)
-- Dependencies
-
-Output format:
-**High Priority:**
-1. [task] - Due: [date]
-
-**Medium Priority:**
-1. [task]"""
+    priority_prompt
 )
 
 email_agent = create_agent_node(
     "email",
-    """You are an email drafting specialist.
-
-Create professional emails with:
-- Clear subject line
-- Appropriate greeting
-- Concise body
-- Call-to-action
-- Professional closing"""
+    emaildraft_prompt
 )
 
 
-# ---- ROUTER ----
 def route_to_agent(state):
     """Route to appropriate agent based on orchestrator output"""
     output = state.get("output", "")
@@ -224,7 +151,6 @@ def route_to_agent(state):
     return "summarizer_agent"
 
 
-# ---- EVALUATOR ----
 def evaluation_node(state):
     result = state.get("output", "")
     user_goal = state.get("input", "")
@@ -236,7 +162,7 @@ Does this result satisfy the user's goal?
 User goal: {user_goal}
 Agent output: {result}
 
-Respond with only "yes" or "no"."""
+Respond with "yes" or "no" and the reasons for not satisfying if applicable."""
     
     verdict = llm.invoke(eval_prompt).content.lower()
     is_satisfied = "yes" in verdict
@@ -258,8 +184,6 @@ def error_node(state):
         "satisfied": False
     }
 
-
-# ---- STATE ----
 class AgentState(TypedDict):
     input: str
     output: str
@@ -267,7 +191,6 @@ class AgentState(TypedDict):
     satisfied: bool
 
 
-# ---- BUILD GRAPH ----
 graph = StateGraph(AgentState)
 
 # Add nodes
@@ -278,10 +201,8 @@ graph.add_node("email_agent", email_agent)
 graph.add_node("evaluate", evaluation_node)
 graph.add_node("error", error_node)
 
-# Set entry point
 graph.set_entry_point("orchestrator")
 
-# Conditional routing from orchestrator
 graph.add_conditional_edges(
     "orchestrator",
     route_to_agent,
@@ -292,27 +213,28 @@ graph.add_conditional_edges(
     }
 )
 
-# All agents go to evaluation
 graph.add_edge("summarizer_agent", "evaluate")
 graph.add_edge("priority_agent", "evaluate")
 graph.add_edge("email_agent", "evaluate")
 
-# Evaluation decides END or error
 graph.add_conditional_edges(
     "evaluate",
-    lambda s: "END" if s.get("satisfied") else "error",
-    {"END": END, "error": "error"}
+    lambda s: "END" if s.get("satisfied") else "orchestrator",
+    {
+        "END": END,
+        "orchestrator": "orchestrator",
+        "error": "error"
+    }
 )
 
 graph.add_edge("error", END)
 
-# Compile
 app = graph.compile()
 
 
 # ---- TEST ----
 if __name__ == "__main__":
     
-    result = app.invoke({"input": "Summarize last 10 email and provide a todo list."})
+    result = app.invoke({"input": "Summarize last 10 email and provide a prioritized todo list."})
     
     print(json.dumps(result, indent=2))
