@@ -1,0 +1,3 @@
+*.json
+openAIkey.txt
+__pycache__
