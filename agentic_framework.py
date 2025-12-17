@@ -9,10 +9,24 @@ from prompts import orchestrator_prompt, summarizer_prompt, priority_prompt, ema
 
 def orchestrator_node(state):
     """Routes user request to appropriate specialist"""
-    user_input = state.get("input", "")
-    
+    evaluation_feedback = state.get("evaluation_input", "")
+    user_input = state.get("user_input", "")
+    if evaluation_feedback!="":
+        output = state.get("output", "")
+        user_input = f"""
+        Previous attempt was insufficient.
+        
+        Original input: {user_input}
+        Previous output: {output}
+        
+        Evaluation feedback:
+        {evaluation_feedback}
+        
+        Please provide an improved response that addresses the feedback.
+        """
     system_prompt = orchestrator_prompt
-
+    print(user_input)
+    print(evaluation_feedback)
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_input)
@@ -153,27 +167,37 @@ def route_to_agent(state):
 
 def evaluation_node(state):
     result = state.get("output", "")
-    user_goal = state.get("input", "")
+    user_goal = state.get("user_input", "")
     tools_used = state.get("tools_used", [])
-
+    iteration_count = state.get("iteration_count")
     eval_prompt = f"""You are an evaluator.
 Does this result satisfy the user's goal?
+Make your decision based on the following criteria:
+    1. Completeness: Does the result fully address the user's request? Does it answer/ fulfill all parts of the request?
+    2. Accuracy: Is the information provided correct and relevant to the user's goal?
 
 User goal: {user_goal}
 Agent output: {result}
 
-Respond with "yes" or "no" and the reasons for not satisfying if applicable."""
+Respond with "yes" or "no" . 
+If the result does not satisfy the user's goal =>
+    Reframe the request and provide feedback on what is missing or incorrect.
+    Make sure to include the incomplete or missing part of original user goal.
+    Also include the agent's output that might be useful for next part in your feedback.
+"""
     
     verdict = llm.invoke(eval_prompt).content.lower()
     is_satisfied = "yes" in verdict
-
+    print(f"\n[EVALUATOR] Verdict: {verdict}")
     print(f"\n[EVALUATOR] Satisfied: {is_satisfied}")
     print(f"[EVALUATOR] Tools used: {tools_used}\n")
-
+    
     return {
         "satisfied": is_satisfied,
+        "evaluation_input": verdict,
         "output": result,
-        "tools_used": tools_used
+        "tools_used": tools_used,
+        "iteration_count": iteration_count + 1
     }
 
 
@@ -185,10 +209,12 @@ def error_node(state):
     }
 
 class AgentState(TypedDict):
-    input: str
+    user_input: str
+    evaluation_input: str = None
     output: str
     tools_used: list
     satisfied: bool
+    iteration_count: int = 0
 
 
 graph = StateGraph(AgentState)
@@ -219,7 +245,7 @@ graph.add_edge("email_agent", "evaluate")
 
 graph.add_conditional_edges(
     "evaluate",
-    lambda s: "END" if s.get("satisfied") else "orchestrator",
+    lambda s: "END" if (s.get("satisfied") or s.get("iteration_count")>=3) else "orchestrator",
     {
         "END": END,
         "orchestrator": "orchestrator",
@@ -235,6 +261,6 @@ app = graph.compile()
 # ---- TEST ----
 if __name__ == "__main__":
     
-    result = app.invoke({"input": "Summarize last 10 email and provide a prioritized todo list."})
+    result = app.invoke({"user_input": "Summarize last 10 email and provide a prioritized todo list.","iteration_count":0})
     
     print(json.dumps(result, indent=2))
