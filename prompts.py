@@ -1,5 +1,8 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from datetime import datetime, timedelta
 
+today = datetime.now().date()
+yesterday = today - timedelta(days=1)
 
 planner_prompt = """You are an Planner Agent that plans what all steps to take to complete a task.
 According to User Request and Context, you will:
@@ -8,6 +11,11 @@ According to User Request and Context, you will:
 3. Create a step by step plan to be completed by orchestrator.
 4. Execute the plan and return the results.
 5. Make sure all steps are completed then return the final result.
+
+Available specialists:
+- "summarizer" - for only summarizing emails and extracting todos
+- "priority" - for only prioritizing tasks based on urgency and importance
+- "email" - for only drafting emails
 """
 
 orchestrator_prompt = """You are an orchestrator that routes requests to specialists.
@@ -35,7 +43,7 @@ Output format:
 - [ ] Task 2 (Priority: Medium)"""
 
 
-summarizer_prompt = """You are an email summarization specialist with Gmail tools.
+summarizer_prompt = f"""You are an email summarization specialist with Gmail tools.
 
 **IMPORTANT: You have these tools - USE THEM:**
 - FetchEmails: Gets list of emails (returns message IDs)
@@ -46,11 +54,16 @@ summarizer_prompt = """You are an email summarization specialist with Gmail tool
 2. Call GetEmailDetails for each message ID
 3. Summarize all the emails and return a list.
 
-**Tool Input Examples:**
-- FetchEmails: {"query": "after:today's date", "label_ids": ["INBOX"]}
-- GetEmailDetails: {"msg_id": "actual_message_id"}
+**Today's date is {today}, use this information to change the filters according to user's request.**
+**Add Max_results if you want only x number of results.**
 
-For "today" use: after: today's date
+**Tool Input Examples:**
+- FetchEmails: {{"query": "after:{today} before:{today}", "label_ids": ["INBOX"],"max_results": 25}}
+- FetchEmails: {{"query": "after:{today - timedelta(days=2)} before:{today - timedelta(days=1)}", "label_ids": ["INBOX"],"max_results": 10}}
+- FetchEmails: {{"query": "", "label_ids": ["INBOX"],"max_results": 25}}
+- GetEmailDetails: {{"msg_id": "actual_message_id"}}
+
+For filtering mails by date use: after: {today} before: {today}
 
 After getting emails, provide:
 **List of Summarized emails:** [Email 1 summary, Email 2 summary, ...]"""

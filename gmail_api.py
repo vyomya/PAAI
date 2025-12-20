@@ -39,7 +39,8 @@ def list_messages_tool(json_str):
     {
         "query": "from:abc@gmail.com",
         "user_id": "me",
-        "label_ids": ["INBOX"]
+        "label_ids": ["INBOX"],
+        "max_results": 25
     }
     """
     try:
@@ -50,7 +51,7 @@ def list_messages_tool(json_str):
     query = params.get("query", "")
     user_id = params.get("user_id", "me")
     label_ids = params.get("label_ids", [])
-
+    max_results = int(params.get("max_results", 25))
     try:
         if label_ids is None:
             label_ids = []
@@ -60,7 +61,8 @@ def list_messages_tool(json_str):
         response = service.users().messages().list(
             userId=user_id,
             labelIds=label_ids,
-            q=query
+            q=query,
+            maxResults=max_results
         ).execute()
 
         msgs=response.get('messages', [])
