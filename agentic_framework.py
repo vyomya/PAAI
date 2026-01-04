@@ -1,105 +1,97 @@
 from langgraph.graph import StateGraph, END
+from langgraph.types import Send
 from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
+from llm import llm, llm_with_tools
 from typing import TypedDict
 from tool import tools
 import json
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-f = open('openAIkey.txt', 'r')
-api_key = f.read().strip()
-f.close() 
-llm = ChatOpenAI(
-    api_key=api_key,
-    model="gpt-4o-mini",
-    temperature=0,
-    max_retries=0,
-)
+from langchain_core.messages import  HumanMessage, SystemMessage
+from prompts import orchestrator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt
 
-# Bind tools to model
-llm_with_tools = llm.bind_tools(tools)
+class AgentState(TypedDict):
+    user_input: str
 
+    plan: dict
+    current_step: int
 
-# ---- AGENT NODES ----
-def orchestrator_node(state):
-    """Routes user request to appropriate specialist"""
-    user_input = state.get("input", "")
-    
-    system_prompt = """You are an orchestrator that routes requests to specialists.
+    artifacts: dict           
+    step_output: str
 
-Available specialists:
-- "summarizer" - for summarizing emails and extracting todos
-- "priority" - for prioritizing tasks  
-- "email" - for drafting emails
+    step_evaluation: dict
+    final_evaluation: dict
 
-Respond with ONLY a JSON object:
-{"destination": "<summarizer|priority|email>", "next_inputs": "<clear instruction>"}"""
+    iteration_count: int
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_input)
-    ]
-    
-    response = llm.invoke(messages)
-    
-    print(f"\n[ORCHESTRATOR] Response: {response.content}\n")
-    
+def planner_node(state):
+    prompt = f"""
+You are a planner for an executive assistant.
+
+User request:
+{state["user_input"]}
+
+Break the task into ordered steps.
+Available agents:
+- summarizer_agent for retrieving and summarizing emails
+- priority_agent for prioritizing tasks
+- email_agent for drafting emails
+
+Respond ONLY in JSON:
+{{
+  "steps": [
+    {{
+      "id": "...",
+      "agent": "...",
+      "outputs": ["..."]
+    }}
+  ]
+}}
+"""
+    plan = json.loads(llm.invoke(prompt).content)
+
+    print({"plan": plan,
+    "current_step": 0,
+    "artifacts": {},
+    "iteration_count": 0})
+
     return {
-        "output": response.content,
-        "tools_used": []
+        "plan": plan,
+        "current_step": 0,
+        "artifacts": {},
+        "iteration_count": 0,
+        "step_output":""
     }
 
-
 def create_agent_node(agent_name, system_prompt):
-    """Factory function to create agent nodes"""
-    tool_node = ToolNode(tools=tools)
-    
+
     def agent_node(state):
-        # Parse input from orchestrator
-        orchestrator_output = state.get("output", "")
-        try:
-            parsed = json.loads(orchestrator_output)
-            agent_input = parsed.get("next_inputs", orchestrator_output)
-        except:
-            agent_input = orchestrator_output
+        step = state["plan"]["steps"][state["current_step"]]
         
-        print(f"\n{'='*60}")
-        print(f"[{agent_name.upper()}] Input: {agent_input}")
-        print(f"{'='*60}\n")
-        
-        # Create initial messages
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=agent_input)
+            HumanMessage(content=step["outputs"][0]+"\n"+state["step_output"])
         ]
-        
         tools_used = []
-        max_iterations = 10
-        
-        for iteration in range(max_iterations):
-            # Call model
+        for _ in range(10):
+            
             response = llm_with_tools.invoke(messages)
             messages.append(response)
             
-            # Check for tool calls
             if not response.tool_calls:
-                # No more tool calls, we're done
+                
                 break
             
             print(f"[{agent_name.upper()}] Tool calls: {[tc['name'] for tc in response.tool_calls]}")
             
-            # Execute tools
             for tool_call in response.tool_calls:
                 tools_used.append(tool_call['name'])
                 
-                # Find and execute the tool
                 tool_name = tool_call['name']
                 tool_args = tool_call['args']
-                
+                print(f"[{agent_name.upper()}] Using tool {tool_name} with args: {tool_args}")
                 tool_result = None
                 for tool in tools:
                     if tool.name == tool_name:
                         try:
-                            # Convert args to JSON string for our tools
                             tool_input = json.dumps(tool_args)
                             tool_result = tool.func(tool_input)
                             print(f"[{agent_name.upper()}] Tool {tool_name} result: {tool_result[:200]}...")
@@ -111,14 +103,12 @@ def create_agent_node(agent_name, system_prompt):
                 if tool_result is None:
                     tool_result = json.dumps({"error": f"Tool {tool_name} not found"})
                 
-                # Add tool result to messages
                 from langchain_core.messages import ToolMessage
                 messages.append(ToolMessage(
                     content=tool_result,
                     tool_call_id=tool_call['id']
                 ))
         
-        # Get final response
         final_content = messages[-1].content if messages else ""
         
         print(f"\n{'='*60}")
@@ -127,192 +117,135 @@ def create_agent_node(agent_name, system_prompt):
         print(f"{'='*60}\n")
         
         return {
-            "output": final_content,
-            "tools_used": tools_used
+            "step_output": final_content,
+            "artifacts": {
+                **state["artifacts"],
+                step["id"]: final_content
+            },
+            "current_step":state["current_step"],
+            "iteration_count":state["iteration_count"]
         }
-    
-    return agent_node
-
-
-# Create specialist agents
-from datetime import datetime, timedelta
-last_week_date = (datetime.now() - timedelta(days=7)).strftime('%Y/%m/%d')
-
-summarizer_agent = create_agent_node(
-    "summarizer",
-    f"""You are an email summarization specialist with Gmail tools.
-
-**IMPORTANT: You have these tools - USE THEM:**
-- FetchEmails: Gets list of emails (returns message IDs)
-- GetEmailDetails: Gets full content of a specific email
-
-**YOUR PROCESS:**
-1. Call FetchEmails to get email list
-2. Call GetEmailDetails for each message ID
-3. Summarize and extract todos
-
-**Tool Input Examples:**
-- FetchEmails: {{"query": "after:{last_week_date}", "label_ids": ["INBOX"]}}
-- GetEmailDetails: {{"msg_id": "actual_message_id"}}
-
-For "last week" use: after:{last_week_date}
-
-After getting emails, provide:
-**Summary:** [Overview]
-**Todo List:**
-- [ ] Task 1 (Priority: High)
-- [ ] Task 2 (Priority: Medium)"""
-)
-
-priority_agent = create_agent_node(
-    "priority",
-    """You are a task prioritization specialist.
-
-Prioritize tasks by:
-- Urgency (deadlines)
-- Importance (impact)
-- Dependencies
-
-Output format:
-**High Priority:**
-1. [task] - Due: [date]
-
-**Medium Priority:**
-1. [task]"""
-)
-
-email_agent = create_agent_node(
-    "email",
-    """You are an email drafting specialist.
-
-Create professional emails with:
-- Clear subject line
-- Appropriate greeting
-- Concise body
-- Call-to-action
-- Professional closing"""
-)
-
-
-# ---- ROUTER ----
-def route_to_agent(state):
-    """Route to appropriate agent based on orchestrator output"""
-    output = state.get("output", "")
-    
-    print(f"\n[ROUTER] Routing based on: {output}\n")
-    
-    try:
-        parsed = json.loads(output)
-        destination = parsed.get("destination", "").lower()
         
-        if "summariz" in destination:
-            return "summarizer_agent"
-        elif "priority" in destination or "prioritiz" in destination:
-            return "priority_agent"
-        elif "email" in destination or "draft" in destination:
-            return "email_agent"
-    except:
-        output_lower = output.lower()
-        if "summariz" in output_lower:
-            return "summarizer_agent"
-        elif "priority" in output_lower:
-            return "priority_agent"
-        elif "email" in output_lower:
-            return "email_agent"
-    
-    print("[ROUTER] Defaulting to summarizer_agent\n")
-    return "summarizer_agent"
+
+    return agent_node
+summarizer_agent = create_agent_node("summarizer", summarizer_prompt)
+priority_agent   = create_agent_node("priority", priority_prompt)
+email_agent      = create_agent_node("email", emaildraft_prompt)
+
+def step_evaluator_node(state):
+    step = state["plan"]["steps"][state["current_step"]]
+
+    prompt = f"""
+You are evaluating an intermediate step.
+
+User goal:
+{state["user_input"]}
+
+Current step:
+{step["outputs"]}
+
+Agent output:
+{state["step_output"]}
+
+Question:
+Is this output sufficient to proceed to the NEXT step?
+
+Respond ONLY in JSON:
+{{
+  "approved": true/false,
+  "issues": "...",
+  "repair": "retry | replan | abort"
+}}
+"""
+    print(state["user_input"])
+    print(state["step_output"])
+    output = llm.invoke(prompt).content
+    print(output)
+    if "true" in output.lower():
+        return {"step_evaluation": {"approved": True, "issues": "", "repair": "continue"}}
+    else:
+        output = "{" + output.split("{")[1]
+        output = output.split("}")[0] + "}"
+        output = json.loads(output)
+        return {"step_evaluation": output, "current_step":state["current_step"],
+            "iteration_count":state["iteration_count"]}
 
 
-# ---- EVALUATOR ----
-def evaluation_node(state):
-    result = state.get("output", "")
-    user_goal = state.get("input", "")
-    tools_used = state.get("tools_used", [])
 
-    eval_prompt = f"""You are an evaluator.
-Does this result satisfy the user's goal?
+def step_router(state):
+    evaluation = state["step_evaluation"]
+    st_update = dict(state)
+    st_update["iteration_count"]+=1
+    # Stop after 3 iterations
+    if st_update["iteration_count"] > 3:
+        return Send("final_evaluator", st_update)
 
-User goal: {user_goal}
-Agent output: {result}
+    # Retry current step
+    if not evaluation["approved"]:
+        return Send(st_update["plan"]["steps"][st_update["current_step"]]["agent"], st_update)
 
-Respond with only "yes" or "no"."""
-    
-    verdict = llm.invoke(eval_prompt).content.lower()
-    is_satisfied = "yes" in verdict
+    # Advance step
+    if st_update["current_step"] + 1 < len(st_update["plan"]["steps"]):
+        st_update["current_step"] +=1
+        return Send(st_update["plan"]["steps"][st_update["current_step"]]["agent"], st_update)
 
-    print(f"\n[EVALUATOR] Satisfied: {is_satisfied}")
-    print(f"[EVALUATOR] Tools used: {tools_used}\n")
+    # Finish
+    return Send("final_evaluator", st_update)
+
+
+
+
+def final_evaluator_node(state):
+    prompt = f"""
+User goal:
+{state["user_input"]}
+
+Artifacts produced:
+{json.dumps(state["artifacts"], indent=2)}
+
+Does this fully satisfy the user's request?
+Respond yes or no with explanation.
+"""
+    verdict = llm.invoke(prompt).content.lower()
 
     return {
-        "satisfied": is_satisfied,
-        "output": result,
-        "tools_used": tools_used
+        "final_evaluation": {
+            "approved": "yes" in verdict,
+            "verdict": verdict
+        }
     }
 
 
-def error_node(state):
-    return {
-        "output": "Error: evaluation failed. The agent could not complete the task satisfactorily.",
-        "tools_used": state.get("tools_used", []),
-        "satisfied": False
-    }
-
-
-# ---- STATE ----
-class AgentState(TypedDict):
-    input: str
-    output: str
-    tools_used: list
-    satisfied: bool
-
-
-# ---- BUILD GRAPH ----
 graph = StateGraph(AgentState)
 
-# Add nodes
-graph.add_node("orchestrator", orchestrator_node)
+graph.add_node("planner", planner_node)
 graph.add_node("summarizer_agent", summarizer_agent)
 graph.add_node("priority_agent", priority_agent)
 graph.add_node("email_agent", email_agent)
-graph.add_node("evaluate", evaluation_node)
-graph.add_node("error", error_node)
 
-# Set entry point
-graph.set_entry_point("orchestrator")
+graph.add_node("step_evaluator", step_evaluator_node)
+graph.add_node("final_evaluator", final_evaluator_node)
 
-# Conditional routing from orchestrator
+graph.set_entry_point("planner")
+
 graph.add_conditional_edges(
-    "orchestrator",
-    route_to_agent,
-    {
-        "summarizer_agent": "summarizer_agent",
-        "priority_agent": "priority_agent",
-        "email_agent": "email_agent"
-    }
+    "planner",
+    lambda s: s["plan"]["steps"][0]["agent"]
 )
 
-# All agents go to evaluation
-graph.add_edge("summarizer_agent", "evaluate")
-graph.add_edge("priority_agent", "evaluate")
-graph.add_edge("email_agent", "evaluate")
+for agent in ["summarizer_agent", "priority_agent", "email_agent"]:
+    graph.add_edge(agent, "step_evaluator")
 
-# Evaluation decides END or error
 graph.add_conditional_edges(
-    "evaluate",
-    lambda s: "END" if s.get("satisfied") else "error",
-    {"END": END, "error": "error"}
+    "step_evaluator",
+    step_router
 )
 
-graph.add_edge("error", END)
+graph.add_edge("final_evaluator", END)
 
-# Compile
 app = graph.compile()
+result = app.invoke({
+    "user_input": "Summarize last 10 emails and create a prioritized todo list"
+})
 
-
-# ---- TEST ----
-if __name__ == "__main__":
-    
-    result = app.invoke({"input": "Summarize last 10 email and provide a todo list."})
-    
-    print(json.dumps(result, indent=2))
+print(json.dumps(result, indent=2))
