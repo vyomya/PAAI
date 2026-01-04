@@ -6,7 +6,7 @@ from typing import TypedDict
 from tool import tools
 import json
 from langchain_core.messages import  HumanMessage, SystemMessage
-from prompts import orchestrator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt
+from prompts import planner_prompt,step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt
 
 class AgentState(TypedDict):
     user_input: str
@@ -23,29 +23,7 @@ class AgentState(TypedDict):
     iteration_count: int
 
 def planner_node(state):
-    prompt = f"""
-You are a planner for an executive assistant.
-
-User request:
-{state["user_input"]}
-
-Break the task into ordered steps.
-Available agents:
-- summarizer_agent for retrieving and summarizing emails
-- priority_agent for prioritizing tasks
-- email_agent for drafting emails
-
-Respond ONLY in JSON:
-{{
-  "steps": [
-    {{
-      "id": "...",
-      "agent": "...",
-      "outputs": ["..."]
-    }}
-  ]
-}}
-"""
+    prompt = planner_prompt.format(user_input=state["user_input"])
     plan = json.loads(llm.invoke(prompt).content)
 
     print({"plan": plan,
@@ -135,28 +113,7 @@ email_agent      = create_agent_node("email", emaildraft_prompt)
 def step_evaluator_node(state):
     step = state["plan"]["steps"][state["current_step"]]
 
-    prompt = f"""
-You are evaluating an intermediate step.
-
-User goal:
-{state["user_input"]}
-
-Current step:
-{step["outputs"]}
-
-Agent output:
-{state["step_output"]}
-
-Question:
-Is this output sufficient to proceed to the NEXT step?
-
-Respond ONLY in JSON:
-{{
-  "approved": true/false,
-  "issues": "...",
-  "repair": "retry | replan | abort"
-}}
-"""
+    prompt = step_evaluator_prompt.format(user_input=state["user_input"],outputs=step["outputs"],step_output=state["step_output"])
     print(state["user_input"])
     print(state["step_output"])
     output = llm.invoke(prompt).content
@@ -196,16 +153,7 @@ def step_router(state):
 
 
 def final_evaluator_node(state):
-    prompt = f"""
-User goal:
-{state["user_input"]}
-
-Artifacts produced:
-{json.dumps(state["artifacts"], indent=2)}
-
-Does this fully satisfy the user's request?
-Respond yes or no with explanation.
-"""
+    prompt =evaluator_prompt.format(user_input=state["user_input"],artifacts = json.dumps(state["artifacts"], indent=2)) 
     verdict = llm.invoke(prompt).content.lower()
 
     return {

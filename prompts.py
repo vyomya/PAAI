@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from datetime import datetime, timedelta
-
+import json
 today = datetime.now().date()
 yesterday = today - timedelta(days=1)
 
@@ -30,6 +30,7 @@ Respond with ONLY a JSON object:
 
 
 priority_prompt = """You are a task prioritization specialist.
+From the list of Summarized Emails, shortlist the emails that might be categorized as a task and is not just informational.
 Given a list of tasks with due dates and importance levels, organize them into High and Medium priority categories.
 
 Prioritize tasks by:
@@ -77,3 +78,61 @@ Create professional emails with:
 - Concise body
 - Call-to-action
 - Professional closing"""
+
+planner_prompt = """
+You are a planner for an executive assistant.
+
+User request:
+{user_input}
+
+Break the task into ordered steps.
+Available agents:
+- summarizer_agent for retrieving and summarizing emails
+- priority_agent for prioritizing tasks
+- email_agent for drafting emails
+
+Respond ONLY in JSON:
+{{
+  "steps": [
+    {{
+      "id": "...",
+      "agent": "...",
+      "outputs": ["..."]
+    }}
+  ]
+}}
+"""
+
+step_evaluator_prompt = """
+You are evaluating an intermediate step.
+
+User goal:
+{user_input}
+
+Current step:
+{outputs}
+
+Agent output:
+{step_output}
+
+Question:
+Is this output sufficient to proceed to the NEXT step?
+
+Respond ONLY in JSON:
+{{
+  "approved": true/false,
+  "issues": "...",
+  "repair": "retry | replan | abort"
+}}
+"""
+
+evaluator_prompt = """
+User goal:
+{user_input}
+
+Artifacts produced:
+{artifacts}
+
+Does this fully satisfy the user's request?
+Respond yes or no with explanation.
+"""
