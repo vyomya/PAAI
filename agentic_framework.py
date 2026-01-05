@@ -192,8 +192,24 @@ graph.add_conditional_edges(
 graph.add_edge("final_evaluator", END)
 
 app = graph.compile()
-result = app.invoke({
-    "user_input": "Summarize last 10 emails and create a prioritized todo list"
-})
+def run_agent(user_query):
+    initial_state = {
+        "user_input": user_query,
+        "plan": {},
+        "current_step": 0,
+        "artifacts": {},
+        "step_output": "",
+        "step_evaluation": {},
+        "final_evaluation": {},
+        "iteration_count": 0
+    }
 
-print(json.dumps(result, indent=2))
+    result = app.invoke(initial_state)
+    return result["step_output"]
+
+if __name__ == "__main__":
+    user_query = input("Enter your query: ")
+    response = run_agent(user_query)
+    print(json.dumps(response, indent=2))
+
+# Summarize last 10 emails and create a prioritized todo list

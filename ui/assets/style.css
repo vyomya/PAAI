@@ -1,0 +1,138 @@
+/* Custom Streamlit Styling for AI Personal Assistant */
+
+:root {
+    --primary-color: #FF6B35;
+    --secondary-color: #004E89;
+    --accent-color: #1AC8ED;
+    --background-color: #F7F7F7;
+    --text-color: #262730;
+    --border-color: #E0E0E0;
+}
+
+/* Main container styling */
+.main {
+    padding: 2rem 1rem;
+}
+
+/* Header styling */
+h1, h2, h3 {
+    color: var(--secondary-color);
+    font-weight: 600;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+h1 {
+    border-bottom: 3px solid var(--primary-color);
+    padding-bottom: 0.5rem;
+}
+
+/* Button styling */
+button {
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+}
+
+/* Card styling */
+.stContainer {
+    border-radius: 12px;
+    padding: 1.5rem;
+    background-color: white;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* Chat message styling */
+.stChatMessage {
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* Input styling */
+input, textarea, select {
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 0.75rem;
+    font-size: 1rem;
+}
+
+input:focus, textarea:focus, select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+/* Sidebar styling */
+.sidebar {
+    background-color: #F5F5F5;
+}
+
+/* Metric styling */
+.stMetric {
+    background-color: white;
+    border-radius: 12px;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+}
+
+/* Alert styling */
+.stAlert {
+    border-radius: 12px;
+    padding: 1rem;
+}
+
+.stSuccess {
+    background-color: #D4EDDA;
+    border-color: #C3E6CB;
+}
+
+.stError {
+    background-color: #F8D7DA;
+    border-color: #F5C6CB;
+}
+
+.stWarning {
+    background-color: #FFF3CD;
+    border-color: #FFEAA7;
+}
+
+.stInfo {
+    background-color: #D1ECF1;
+    border-color: #BEE5EB;
+}
+
+/* Divider styling */
+hr {
+    border: none;
+    height: 2px;
+    background: linear-gradient(to right, var(--primary-color), transparent);
+    margin: 2rem 0;
+}
+
+/* Tab styling */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0.5rem;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .main {
+        padding: 1rem 0.5rem;
+    }
+    
+    h1, h2, h3 {
+        font-size: 1.5rem;
+    }
+}
