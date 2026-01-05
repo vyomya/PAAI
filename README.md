@@ -145,11 +145,6 @@ This project explores practical implementations of agentic AI systems, focusing 
 
 The system is designed for both research experimentation and production deployment scenarios.
 
----
-
-## License
-
-[Specify your license here]
 
 ---
 
