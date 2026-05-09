@@ -5,7 +5,8 @@ Chat page - Interactive chat interface
 import streamlit as st
 import sys
 from pathlib import Path
-
+import requests
+import json
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from utils.session import add_message, get_messages, clear_messages
@@ -48,8 +49,11 @@ def render_chat_page():
         
         # Simulate AI response (replace with actual LLM call)
         with st.spinner("AI is thinking..."):
-            # TODO: Integrate with your LLM module
-            response = f"Echo: {user_input}"
+            try:
+                api_response = requests.post("http://localhost:8000/agent", data=json.dumps({"query": user_input}))
+                response = api_response.json().get("response", "No response received")
+            except Exception as e:
+                response = f"Error: {str(e)}"
             add_message("assistant", response)
             st.chat_message("assistant").write(response)
         
