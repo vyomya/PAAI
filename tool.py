@@ -1,5 +1,6 @@
 from langchain_core.tools import Tool
 from gmail_api import list_messages_tool, get_message_tool
+from calendar_api import list_events
 
 def web_search(query: str) -> str:
     return f"Stub: Search results for '{query}'"
@@ -27,6 +28,20 @@ tools = [
         """
     ),
     Tool(
+        name="FetchCalendarEvents",
+        func=list_events,
+        description="""Fetches Calender Events from Google Events. 
+        Input must be a JSON string with optional fields:
+        {"time_min": "the start of time frame in which you want the calendar events", "time_max": "the start of time frame in which you want the calendar events", "max_results": 10}
+        Query examples:
+        - "time_min": "time+Date" - events after this date
+        - "time_max": "time+Date+7" - events till this date
+        - "max_results": 10 - choose number of emails you want to fetch
+        Returns a JSON string with a list of event objects containing event IDs and event information.
+        Example input: '{"time_min": "2026-05-23T18:20:46.600724Z","time_max":"2026-05-30T18:21:20.637654Z", "max_results": 10}'
+        """
+    )
+    ,Tool(
         name="GetEmailDetails",
         func=get_message_tool,
         description="""Gets full details of a specific email by its message ID.
