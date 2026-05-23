@@ -6,7 +6,8 @@ from typing import TypedDict
 from tool import tools
 import json
 from langchain_core.messages import  HumanMessage, SystemMessage
-from prompts import planner_prompt,step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt
+from prompts import planner_prompt,step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt
+import re
 
 class AgentState(TypedDict):
     user_input: str
@@ -24,7 +25,9 @@ class AgentState(TypedDict):
 
 def planner_node(state):
     prompt = planner_prompt.format(user_input=state["user_input"])
-    plan = json.loads(llm.invoke(prompt).content)
+    content = llm.invoke(prompt).content
+    clean = re.sub(r'^```(?:json)?\n?', '', content).rstrip('`').strip()
+    plan = json.loads(clean)
 
     print({"plan": plan,
     "current_step": 0,
@@ -109,6 +112,7 @@ def create_agent_node(agent_name, system_prompt):
 summarizer_agent = create_agent_node("summarizer", summarizer_prompt)
 priority_agent   = create_agent_node("priority", priority_prompt)
 email_agent      = create_agent_node("email", emaildraft_prompt)
+calendar_agent      = create_agent_node("calendar", calendar_prompt)
 
 def step_evaluator_node(state):
     step = state["plan"]["steps"][state["current_step"]]
@@ -170,6 +174,7 @@ graph.add_node("planner", planner_node)
 graph.add_node("summarizer_agent", summarizer_agent)
 graph.add_node("priority_agent", priority_agent)
 graph.add_node("email_agent", email_agent)
+graph.add_node("calendar_agent",calendar_agent)
 
 graph.add_node("step_evaluator", step_evaluator_node)
 graph.add_node("final_evaluator", final_evaluator_node)
@@ -181,7 +186,7 @@ graph.add_conditional_edges(
     lambda s: s["plan"]["steps"][0]["agent"]
 )
 
-for agent in ["summarizer_agent", "priority_agent", "email_agent"]:
+for agent in ["summarizer_agent", "priority_agent", "email_agent", "calendar_agent"]:
     graph.add_edge(agent, "step_evaluator")
 
 graph.add_conditional_edges(
@@ -203,7 +208,6 @@ def run_agent(user_query):
         "final_evaluation": {},
         "iteration_count": 0
     }
-
     result = app.invoke(initial_state)
     return result["step_output"]
 

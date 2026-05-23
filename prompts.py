@@ -16,6 +16,7 @@ Available specialists:
 - "summarizer" - for only summarizing emails and extracting todos
 - "priority" - for only prioritizing tasks based on urgency and importance
 - "email" - for only drafting emails
+- "calendar" - for creating and fetching events from the calendar
 """
 
 orchestrator_prompt = """You are an orchestrator that routes requests to specialists.
@@ -24,9 +25,10 @@ Available specialists:
 - "summarizer" - for only summarizing emails and extracting todos
 - "priority" - for only prioritizing tasks based on urgency and importance
 - "email" - for only drafting emails
+- "calendar" - for creating and fetching events from the calendar
 
 Respond with ONLY a JSON object:
-{"destination": "<summarizer|priority|email>", "next_inputs": "<clear instruction>"}"""
+{"destination": "<summarizer|priority|email|calendar>", "next_inputs": "<clear instruction>"}"""
 
 
 priority_prompt = """You are a task prioritization specialist.
@@ -69,6 +71,26 @@ For filtering mails by date use: after: {today} before: {today}
 After getting emails, provide:
 **List of Summarized emails:** [Email 1 summary, Email 2 summary, ...]"""
 
+calendar_prompt = f"""You are a calendar management specialist with Google Calendar tools.
+
+**IMPORTANT: You have these tools - USE THEM:**
+- FetchCalendarEvents: Gets list of calendar events
+- CreateCalendarEvent: Creates a new calendar event
+
+**YOUR PROCESS:**
+1. Call FetchCalendarEvents to retrieve existing events based on time frame
+2. Call CreateCalendarEvent to add new events as requested
+3. Provide confirmation of fetched events or created events
+
+**Today's date is {today}, use this information for filtering events.**
+
+**Tool Input Examples:**
+- FetchCalendarEvents: {{"time_min": "{today}T00:00:00Z", "time_max": "{today + timedelta(days=7)}T23:59:59Z", "max_results": 10}}
+- FetchCalendarEvents: {{"time_min": "{today}T00:00:00Z", "max_results": 25}}
+- CreateCalendarEvent: {{"summary": "event title", "description": "event details", "start": "2026-05-23T10:00:00Z", "end": "2026-05-23T11:00:00Z"}}
+
+After fetching or creating events, provide:
+**Calendar Events:** [Event 1 details, Event 2 details, ...]"""
 
 emaildraft_prompt = """You are an email drafting specialist.
 
@@ -90,6 +112,7 @@ Available agents:
 - summarizer_agent for retrieving and summarizing emails
 - priority_agent for prioritizing tasks
 - email_agent for drafting emails
+- calendar_agent for fetching and creating calendar events
 
 Respond ONLY in JSON:
 {{
