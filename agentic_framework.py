@@ -6,7 +6,7 @@ from typing import TypedDict
 from tool import tools
 import json
 from langchain_core.messages import  HumanMessage, SystemMessage
-from prompts import planner_prompt,step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt
+from prompts import planner_prompt, step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt
 import re
 
 class AgentState(TypedDict):
@@ -14,6 +14,8 @@ class AgentState(TypedDict):
 
     plan: dict
     current_step: int
+
+    context:dict
 
     artifacts: dict           
     step_output: str
@@ -38,6 +40,7 @@ def planner_node(state):
         "plan": plan,
         "current_step": 0,
         "artifacts": {},
+        "context": {},
         "iteration_count": 0,
         "step_output":""
     }
@@ -64,6 +67,7 @@ def create_agent_node(agent_name, system_prompt):
             print(f"[{agent_name.upper()}] Tool calls: {[tc['name'] for tc in response.tool_calls]}")
             
             for tool_call in response.tool_calls:
+                
                 tools_used.append(tool_call['name'])
                 
                 tool_name = tool_call['name']
@@ -71,11 +75,14 @@ def create_agent_node(agent_name, system_prompt):
                 print(f"[{agent_name.upper()}] Using tool {tool_name} with args: {tool_args}")
                 tool_result = None
                 for tool in tools:
+                    
                     if tool.name == tool_name:
                         try:
                             tool_input = json.dumps(tool_args)
                             tool_result = tool.func(tool_input)
                             print(f"[{agent_name.upper()}] Tool {tool_name} result: {tool_result[:200]}...")
+                            if tool_name == "GetTime":
+                                state['context']= {"current_time":tool_result}
                         except Exception as e:
                             tool_result = json.dumps({"error": str(e)})
                             print(f"[{agent_name.upper()}] Tool {tool_name} error: {e}")
@@ -106,8 +113,7 @@ def create_agent_node(agent_name, system_prompt):
             "current_step":state["current_step"],
             "iteration_count":state["iteration_count"]
         }
-        
-
+    
     return agent_node
 summarizer_agent = create_agent_node("summarizer", summarizer_prompt)
 priority_agent   = create_agent_node("priority", priority_prompt)
@@ -117,7 +123,7 @@ calendar_agent      = create_agent_node("calendar", calendar_prompt)
 def step_evaluator_node(state):
     step = state["plan"]["steps"][state["current_step"]]
 
-    prompt = step_evaluator_prompt.format(user_input=state["user_input"],outputs=step["outputs"],step_output=state["step_output"])
+    prompt = step_evaluator_prompt.format(user_input=state["user_input"],outputs=step["outputs"],step_output=state["step_output"],context=json.dumps(state['context']))
     print(state["user_input"])
     print(state["step_output"])
     output = llm.invoke(prompt).content
@@ -157,7 +163,7 @@ def step_router(state):
 
 
 def final_evaluator_node(state):
-    prompt =evaluator_prompt.format(user_input=state["user_input"],artifacts = json.dumps(state["artifacts"], indent=2)) 
+    prompt =evaluator_prompt.format(user_input=state["user_input"],artifacts = json.dumps(state["artifacts"]),context=json.dumps(state['context']), indent=2) 
     verdict = llm.invoke(prompt).content.lower()
 
     return {

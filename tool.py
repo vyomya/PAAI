@@ -1,11 +1,20 @@
 from langchain_core.tools import Tool
 from gmail_api import list_messages_tool, get_message_tool
 from calendar_api import list_events
+from generic_tools import get_time
 
 def web_search(query: str) -> str:
     return f"Stub: Search results for '{query}'"
 
 tools = [
+    Tool(
+        name="GetTime",
+        func = get_time,
+        description="""Gets the Current Date and Time, in order to get more context of User prompt
+        Input is empty ,always gives current time and date:
+        { }
+        """
+    ),
     Tool(
         name="WebSearch",
         func=web_search,
