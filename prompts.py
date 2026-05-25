@@ -1,10 +1,14 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from datetime import datetime, timedelta
 import json
-today = datetime.now().date()
-yesterday = today - timedelta(days=1)
+# today = datetime.now().date()
+# yesterday = today - timedelta(days=1)
+today = datetime.strptime('2001-01-01', '%Y-%m-%d')
 
 planner_prompt = """You are an Planner Agent that plans what all steps to take to complete a task.
+You can get more context about User's Request by:
+1. Get Current Date and Time by Using GetTime tool
+
 According to User Request and Context, you will:
 1. Analyze the user request and context
 2. Identify the main task and sub-tasks
@@ -57,7 +61,7 @@ summarizer_prompt = f"""You are an email summarization specialist with Gmail too
 2. Call GetEmailDetails for each message ID
 3. Summarize all the emails and return a list.
 
-**Today's date is {today}, use this information to change the filters according to user's request.**
+**Today's date can be fetched from GetTime, use this information to change the filters according to user's request.**
 **Add Max_results if you want only x number of results.**
 
 **Tool Input Examples:**
@@ -82,7 +86,7 @@ calendar_prompt = f"""You are a calendar management specialist with Google Calen
 2. Call CreateCalendarEvent to add new events as requested
 3. Provide confirmation of fetched events or created events
 
-**Today's date is {today}, use this information for filtering events.**
+**Today's date can be fetched from GetTime, use this information for filtering events.**
 
 **Tool Input Examples:**
 - FetchCalendarEvents: {{"time_min": "{today}T00:00:00Z", "time_max": "{today + timedelta(days=7)}T23:59:59Z", "max_results": 10}}
@@ -132,6 +136,9 @@ You are evaluating an intermediate step.
 User goal:
 {user_input}
 
+Context:
+{context}
+
 Current step:
 {outputs}
 
@@ -152,6 +159,9 @@ Respond ONLY in JSON:
 evaluator_prompt = """
 User goal:
 {user_input}
+
+Context:
+{context}
 
 Artifacts produced:
 {artifacts}

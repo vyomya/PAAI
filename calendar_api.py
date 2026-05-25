@@ -104,11 +104,11 @@ def create_event(service, calendar_id="primary", event=None):
         raise RuntimeError(f"Failed to create event: {error}") from error
 
 
-if __name__ == "__main__":
-    credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    service = create_calendar_service(credentials_path)
-    calendars = list_calendars(service)
-    print(list_events(service))
-    print("Calendars:")
-    for cal in calendars:
-        print(f"- {cal.get('summary')} ({cal.get('id')})")
+# if __name__ == "__main__":
+#     credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+#     service = create_calendar_service(credentials_path)
+#     calendars = list_calendars(service)
+#     print(list_events(service))
+#     print("Calendars:")
+#     for cal in calendars:
+#         print(f"- {cal.get('summary')} ({cal.get('id')})")
