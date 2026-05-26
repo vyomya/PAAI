@@ -1,3 +1,4 @@
 *.json
 openAIkey.txt
 __pycache__
+*.db
