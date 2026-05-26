@@ -134,5 +134,7 @@ def get_message_tool(json_str):
         return json.dumps(msg_data)
     except Exception as e:
         return json.dumps({"error": str(e)})
-
-print(list_messages_tool('{}'))
+# from datetime import datetime
+# today = datetime.strptime('2001-01-01', '%Y-%m-%d')
+# print(today.date())
+# print(list_messages_tool(json.dumps({'query': 'after:2026-05-22 before:2026-05-23', 'label_ids': ['INBOX'], 'max_results': 10})))

@@ -1,6 +1,5 @@
 from langgraph.graph import StateGraph, END
 from langgraph.types import Send
-from langgraph.prebuilt import ToolNode
 from llm import llm, llm_with_tools
 from typing import TypedDict
 from tool import tools
@@ -8,10 +7,11 @@ import json
 from langchain_core.messages import  HumanMessage, SystemMessage
 from prompts import planner_prompt, step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt
 import re
+from db import init_db, load_recent_sessions, save_session
 
 class AgentState(TypedDict):
     user_input: str
-
+    past_chat: str   
     plan: dict
     current_step: int
 
@@ -26,7 +26,8 @@ class AgentState(TypedDict):
     iteration_count: int
 
 def planner_node(state):
-    prompt = planner_prompt.format(user_input=state["user_input"])
+    print(state["past_chat"])
+    prompt = planner_prompt.format(user_input=state["user_input"],past_chat=state["past_chat"])
     content = llm.invoke(prompt).content
     clean = re.sub(r'^```(?:json)?\n?', '', content).rstrip('`').strip()
     plan = json.loads(clean)
@@ -49,11 +50,22 @@ def create_agent_node(agent_name, system_prompt):
 
     def agent_node(state):
         step = state["plan"]["steps"][state["current_step"]]
-        
+        issues = state.get("step_evaluation", {}).get("issues", "")
+
+        if issues:
+            human_content = (
+                f"{step['outputs'][0]}\n\n"
+                f"Previous attempt failed with these issues:\n{issues}\n"
+                f"Previous bad output was:\n{state['step_output']}\n"
+                f"Please produce a corrected output."
+            )
+        else:
+            human_content = step["outputs"][0] + "\n" + state["step_output"]
+
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=step["outputs"][0]+"\n"+state["step_output"])
-        ]
+            HumanMessage(content=human_content)
+]
         tools_used = []
         for _ in range(10):
             
@@ -149,6 +161,7 @@ def step_router(state):
 
     # Retry current step
     if not evaluation["approved"]:
+        st_update["step_output"] = ""
         return Send(st_update["plan"]["steps"][st_update["current_step"]]["agent"], st_update)
 
     # Advance step
@@ -165,7 +178,12 @@ def step_router(state):
 def final_evaluator_node(state):
     prompt =evaluator_prompt.format(user_input=state["user_input"],artifacts = json.dumps(state["artifacts"]),context=json.dumps(state['context']), indent=2) 
     verdict = llm.invoke(prompt).content.lower()
-
+    plan_summary = [step["agent"] for step in state["plan"]["steps"]]
+    save_session(
+        user_input=state["user_input"],
+        final_output=state["step_output"],
+        plan_summary=plan_summary
+    )
     return {
         "final_evaluation": {
             "approved": "yes" in verdict,
@@ -203,12 +221,22 @@ graph.add_conditional_edges(
 graph.add_edge("final_evaluator", END)
 
 app = graph.compile()
+
+
+init_db()
 def run_agent(user_query):
+    recent = load_recent_sessions(limit=5)
+    past_context = "\n".join([
+        f"- [{s['timestamp']}] User asked: {s['user_input']} → {s['final_output']}"
+        for s in recent
+    ]) or "No previous sessions."
     initial_state = {
         "user_input": user_query,
+        "past_chat": past_context,
         "plan": {},
         "current_step": 0,
         "artifacts": {},
+        "context":{},
         "step_output": "",
         "step_evaluation": {},
         "final_evaluation": {},
