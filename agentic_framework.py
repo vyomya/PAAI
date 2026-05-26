@@ -1,34 +1,45 @@
 from langgraph.graph import StateGraph, END
 from langgraph.types import Send
 from llm import llm, llm_with_tools
-from typing import TypedDict
+from typing import TypedDict, List
 from tool import tools
 import json
-from langchain_core.messages import  HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from prompts import planner_prompt, step_evaluator_prompt, evaluator_prompt, summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt
 import re
-from db import init_db, load_recent_sessions, save_session
+from db import init_db, load_messages, save_message, save_session
+from datetime import datetime
 
 class AgentState(TypedDict):
     user_input: str
-    past_chat: str   
+    message_history: List[dict]
+    session_id: str
     plan: dict
     current_step: int
-
-    context:dict
-
-    artifacts: dict           
+    context: dict
+    artifacts: dict
     step_output: str
-
     step_evaluation: dict
     final_evaluation: dict
-
     iteration_count: int
 
 def planner_node(state):
-    print(state["past_chat"])
-    prompt = planner_prompt.format(user_input=state["user_input"],past_chat=state["past_chat"])
-    content = llm.invoke(prompt).content
+    history_messages = []
+    for m in state["message_history"]:
+        if m["role"] == "user":
+            history_messages.append(HumanMessage(content=m["content"]))
+        elif m["role"] == "assistant":
+            history_messages.append(AIMessage(content=m["content"]))
+        elif m["role"] == "system":
+            history_messages.append(SystemMessage(content=m["content"]))
+
+    messages = [
+        SystemMessage(content=planner_prompt),
+        *history_messages,
+        HumanMessage(content=state["user_input"])
+    ]
+
+    content = llm.invoke(messages).content
     clean = re.sub(r'^```(?:json)?\n?', '', content).rstrip('`').strip()
     plan = json.loads(clean)
 
@@ -64,8 +75,7 @@ def create_agent_node(agent_name, system_prompt):
 
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=human_content)
-]
+            HumanMessage(content=human_content)]
         tools_used = []
         for _ in range(10):
             
@@ -127,10 +137,11 @@ def create_agent_node(agent_name, system_prompt):
         }
     
     return agent_node
+
 summarizer_agent = create_agent_node("summarizer", summarizer_prompt)
-priority_agent   = create_agent_node("priority", priority_prompt)
-email_agent      = create_agent_node("email", emaildraft_prompt)
-calendar_agent      = create_agent_node("calendar", calendar_prompt)
+priority_agent = create_agent_node("priority", priority_prompt)
+email_agent = create_agent_node("email", emaildraft_prompt)
+calendar_agent = create_agent_node("calendar", calendar_prompt)
 
 def step_evaluator_node(state):
     step = state["plan"]["steps"][state["current_step"]]
@@ -155,35 +166,48 @@ def step_router(state):
     evaluation = state["step_evaluation"]
     st_update = dict(state)
     st_update["iteration_count"]+=1
-    # Stop after 3 iterations
+    
     if st_update["iteration_count"] > 3:
         return Send("final_evaluator", st_update)
 
-    # Retry current step
     if not evaluation["approved"]:
         st_update["step_output"] = ""
         return Send(st_update["plan"]["steps"][st_update["current_step"]]["agent"], st_update)
 
-    # Advance step
     if st_update["current_step"] + 1 < len(st_update["plan"]["steps"]):
         st_update["current_step"] +=1
         return Send(st_update["plan"]["steps"][st_update["current_step"]]["agent"], st_update)
 
-    # Finish
     return Send("final_evaluator", st_update)
 
 
-
-
 def final_evaluator_node(state):
-    prompt =evaluator_prompt.format(user_input=state["user_input"],artifacts = json.dumps(state["artifacts"]),context=json.dumps(state['context']), indent=2) 
+    prompt = evaluator_prompt.format(
+        user_input=state["user_input"],
+        artifacts=json.dumps(state["artifacts"]),
+        context=json.dumps(state['context']),
+        indent=2
+    )
     verdict = llm.invoke(prompt).content.lower()
     plan_summary = [step["agent"] for step in state["plan"]["steps"]]
+
     save_session(
         user_input=state["user_input"],
         final_output=state["step_output"],
-        plan_summary=plan_summary
+        plan_summary=plan_summary,
+        session_id=state["session_id"]
     )
+    
+    save_message(state["session_id"], "user", state["user_input"])
+    save_message(state["session_id"], "assistant", state["step_output"])
+
+    if state["artifacts"]:
+        save_message(
+            state["session_id"],
+            "system",
+            f"[ARTIFACTS FROM PREVIOUS QUERY]\n{json.dumps(state['artifacts'], indent=2)}"
+        )
+
     return {
         "final_evaluation": {
             "approved": "yes" in verdict,
@@ -198,8 +222,7 @@ graph.add_node("planner", planner_node)
 graph.add_node("summarizer_agent", summarizer_agent)
 graph.add_node("priority_agent", priority_agent)
 graph.add_node("email_agent", email_agent)
-graph.add_node("calendar_agent",calendar_agent)
-
+graph.add_node("calendar_agent", calendar_agent)
 graph.add_node("step_evaluator", step_evaluator_node)
 graph.add_node("final_evaluator", final_evaluator_node)
 
@@ -213,26 +236,21 @@ graph.add_conditional_edges(
 for agent in ["summarizer_agent", "priority_agent", "email_agent", "calendar_agent"]:
     graph.add_edge(agent, "step_evaluator")
 
-graph.add_conditional_edges(
-    "step_evaluator",
-    step_router
-)
-
+graph.add_conditional_edges("step_evaluator", step_router)
 graph.add_edge("final_evaluator", END)
 
 app = graph.compile()
 
-
 init_db()
-def run_agent(user_query):
-    recent = load_recent_sessions(limit=5)
-    past_context = "\n".join([
-        f"- [{s['timestamp']}] User asked: {s['user_input']} → {s['final_output']}"
-        for s in recent
-    ]) or "No previous sessions."
+
+def run_agent(user_query: str):
+    session_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    message_history = load_messages(limit=20)
+
     initial_state = {
         "user_input": user_query,
-        "past_chat": past_context,
+        "message_history": message_history,
+        "session_id": session_id,
         "plan": {},
         "current_step": 0,
         "artifacts": {},
@@ -242,6 +260,7 @@ def run_agent(user_query):
         "final_evaluation": {},
         "iteration_count": 0
     }
+
     result = app.invoke(initial_state)
     return result["step_output"]
 
@@ -249,5 +268,3 @@ if __name__ == "__main__":
     user_query = input("Enter your query: ")
     response = run_agent(user_query)
     print(json.dumps(response, indent=2))
-
-# Summarize last 10 emails and create a prioritized todo list
