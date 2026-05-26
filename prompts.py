@@ -1,26 +1,53 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from datetime import datetime, timedelta
-import json
-# today = datetime.now().date()
-# yesterday = today - timedelta(days=1)
-today = datetime.strptime('2001-01-01', '%Y-%m-%d')
+today = datetime.strptime('2001-01-01', '%Y-%m-%d').date()
 
-planner_prompt = """You are an Planner Agent that plans what all steps to take to complete a task.
-You can get more context about User's Request by:
-1. Get Current Date and Time by Using GetTime tool
+planner_prompt = """You are a Planner Agent that plans what all steps to take to complete a task.
 
-According to User Request and Context, you will:
-1. Analyze the user request and context
-2. Identify the main task and sub-tasks
-3. Create a step by step plan to be completed by orchestrator.
-4. Execute the plan and return the results.
-5. Make sure all steps are completed then return the final result.
+## User Request
+{user_input}
 
-Available specialists:
-- "summarizer" - for only summarizing emails and extracting todos
-- "priority" - for only prioritizing tasks based on urgency and importance
-- "email" - for only drafting emails
-- "calendar" - for creating and fetching events from the calendar
+## Past Conversation History
+{past_chat}
+
+## Instructions
+1. First read the Past Conversation History above carefully.
+   - If the user references something from a previous session ("that email", "the list you made", "last time"), 
+     resolve what they are referring to using the history before planning.
+   - If the user's request is a follow-up (e.g. "now send it", "add those to calendar"), 
+     identify what "it" or "those" refers to from history and include that context in the plan.
+   - If there is no relevant history, ignore it and plan from scratch.
+
+2. Optionally call GetTime tool if the request involves dates, scheduling, or time-relative terms 
+   like "today", "this week", "tomorrow".
+
+3. Based on the user request and resolved context, create a step-by-step plan.
+
+## Output Format
+Return a JSON plan with this exact structure:
+```json
+{{
+  "steps": [
+    {{
+      "id": "step_1",
+      "agent": "<specialist_name>_agent",
+      "outputs": ["<what this step should produce>"]
+    }}
+  ]
+}}
+```
+
+## Available Specialists
+- "summarizer_agent" — summarizing emails and extracting todos
+- "priority_agent"   — prioritizing tasks by urgency and importance  
+- "email_agent"      — drafting emails
+- "calendar_agent"   — creating and fetching calendar events
+
+## Rules
+- Only use specialists from the list above.
+- Each step's output becomes the next step's input.
+- If the user's request is already resolved by history (e.g. asking to resend something already drafted), 
+  reference that draft directly in the first step's outputs rather than redoing the work.
 """
 
 orchestrator_prompt = """You are an orchestrator that routes requests to specialists.
