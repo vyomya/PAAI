@@ -4,6 +4,8 @@ A production-grade agentic personal assistant framework built with LangGraph, de
 
 This project demonstrates how agentic workflows can evolve beyond single-turn conversational interfaces toward sophisticated executive assistant systems for real-world applications.
 
+## Demo
+[https://drive.google.com/file/d/1Y7JCcRGlu2tZbPylGszfLhbwl8BcEYnE/view?usp=sharing](DEMO link)
 ---
 
 ## Features
