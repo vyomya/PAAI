@@ -1,11 +1,50 @@
 from langchain_core.tools import Tool
+import json
 from gmail_api import list_messages_tool, get_message_tool
 from calendar_api import list_events
 from generic_tools import get_time
+from db import search_messages, get_recent_messages
 
 def web_search(query: str) -> str:
     return f"Stub: Search results for '{query}'"
 
+def GetRecentMessages(input: str) -> str:
+    """
+    Returns the most recent conversation messages in chronological order.
+    Input JSON: {"limit": 10}
+    Use this when user references something from the last response 
+    ("point 8", "that email", "what you just said").
+    """
+    try:
+        args = json.loads(input)
+        limit = args.get("limit", 10)
+    except:
+        limit = 10
+
+    messages = get_recent_messages(limit=limit)
+    if not messages:
+        return "No conversation history found."
+    return json.dumps(messages, indent=2)
+
+
+def SearchMessages(input: str) -> str:
+    """
+    Semantically searches conversation history for relevant past messages.
+    Input JSON: {"query": "interview discussion", "limit": 5}
+    Use this when user references a specific topic from a past session
+    ("our discussion about interviews", "what we said about Bosch last week").
+    """
+    try:
+        args = json.loads(input)
+        query = args.get("query", "")
+        limit = args.get("limit", 5)
+    except:
+        return "Invalid input."
+
+    messages = search_messages(query=query, limit=limit)
+    if not messages:
+        return "No relevant messages found."
+    return json.dumps(messages, indent=2)
 tools = [
     Tool(
         name="GetTime",
@@ -65,4 +104,24 @@ tools = [
         Example input: '{"msg_id": "18a1b2c3d4e5f6g7"}'
         """
     ),
+    Tool(
+        name="SearchMessages",
+        func=SearchMessages,
+        description="""Semantically searches conversation history for relevant past messages.
+        Input must be a JSON string: {"query": "search terms", "limit": 5}
+        Use this when user references a specific topic from a past session  ("our discussion about interviews", "what we said about Bosch last week").
+        Returns a JSON string with a list of relevant messages.
+        Example input: '{"query": "interview discussion", "limit": 5}'
+        """
+    ),
+    Tool(
+        name="GetRecentMessages",
+        func=GetRecentMessages,
+        description="""Returns the most recent conversation messages in chronological order.
+        Input must be a JSON string: {"limit": 10}
+        Use this when user references something from the last response ("point 8", "that email", "what you just said").
+        Returns a JSON string with a list of recent messages.
+        Example input: '{"limit": 10}'
+        """
+    )
 ]
