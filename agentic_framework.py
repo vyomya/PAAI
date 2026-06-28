@@ -9,39 +9,47 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from prompts import (
     planner_prompt, step_evaluator_prompt, evaluator_prompt,
     summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt,
-    history_agent_prompt, preference_agent_prompt
+    history_agent_prompt, preference_agent_prompt,
+    classifier_prompt, passive_extractor_prompt   # ✅ new
 )
 from db import (
     init_db, load_messages, save_message, save_session,
-    save_preference, load_preferences, delete_preference
+    load_preferences, delete_preference,
+    upsert_preference, increment_interactions_since_seen  # ✅ updated
 )
 from datetime import datetime
 
 
-# ── Classifier ────────────────────────────────────────────────────────────────
-PREFERENCE_TRIGGERS = [
-    r'\balways\b', r'\bnever\b', r'\bfrom now on\b',
-    r'\bevery time\b', r"don't ever", r'\bprefer\b',
-    r'\bmake sure you\b', r'\bstop doing\b', r'\bstop showing\b'
-]
+# ── Classifier — LLM-based, replaces regex ───────────────────────────────────
+def classify_message(text: str, recent_history: list = None) -> dict:
+    """
+    Returns dict with:
+      types: list of "task" | "preference" | "correction"
+      has_correction: bool
+      contradiction_strength: "none"|"weak"|"partial"|"absolute"
+    """
+    history_text = ""
+    if recent_history:
+        last_two = recent_history[-2:]
+        history_text = "\n".join(
+            f"{m['role'].upper()}: {m['content'][:300]}" for m in last_two
+        )
 
-TASK_WORDS = [
-    "summarize", "draft", "send", "check", "schedule", "show",
-    "find", "create", "get", "fetch", "give", "list", "reply",
-    "add", "update", "tell", "what", "when", "how", "point",
-    "last", "previous", "earlier", "discuss", "said", "mention"
-]
+    prompt = classifier_prompt.format(
+        recent_history=history_text or "No prior conversation.",
+        user_input=text
+    )
 
-def classify_message(text: str) -> list:
-    text_lower = text.lower()
-    types = []
-    if any(re.search(p, text_lower) for p in PREFERENCE_TRIGGERS):
-        types.append("preference")
-    if any(word in text_lower for word in TASK_WORDS):
-        types.append("task")
-    if not types:
-        types.append("task")
-    return types
+    try:
+        response = llm.invoke(prompt).content
+        clean = re.sub(r'^```(?:json)?\n?', '', response).rstrip('`').strip()
+        result = json.loads(clean)
+        print(f"[CLASSIFIER] {result}")
+        return result
+    except Exception as e:
+        print(f"[CLASSIFIER] Parse error: {e} — defaulting to task")
+        return {"types": ["task"], "has_correction": False,
+                "contradiction_strength": "none", "reasoning": "fallback"}
 
 
 # ── AgentState ────────────────────────────────────────────────────────────────
@@ -51,6 +59,7 @@ class AgentState(TypedDict):
     session_id: str
     preferences: dict
     message_types: List[str]
+    classification: dict       # ✅ full classifier result including correction info
     plan: dict
     current_step: int
     context: dict
@@ -64,7 +73,10 @@ class AgentState(TypedDict):
 # ── Preference Agent ──────────────────────────────────────────────────────────
 def preference_node(state):
     current_prefs = load_preferences()
-    prefs_text = "\n".join(f"- {k}: {v}" for k, v in current_prefs.items()) or "None saved yet."
+    prefs_text = "\n".join(
+        f"- {k} ({v['scope']}): {v['rule']} [conf={v['confidence']:.2f}]"
+        for k, v in current_prefs.items()
+    ) or "None saved yet."
 
     prompt = preference_agent_prompt.format(
         current_preferences=prefs_text,
@@ -76,11 +88,22 @@ def preference_node(state):
 
     try:
         result = json.loads(clean)
+        classification = state.get("classification", {})
+        is_correction = classification.get("has_correction", False)
+        contradiction_strength = classification.get("contradiction_strength", "none")
+
         if result["action"] == "save":
-            save_preference(result["category"], result["rule"])
-            print(f"[PREFERENCE] Saved: {result['category']} -> {result['rule']}")
+            upsert_preference(
+                category=result["category"],
+                rule=result["rule"],
+                scope=result.get("scope", "global"),
+                source="correction" if is_correction else "explicit",
+                contradiction=is_correction and contradiction_strength != "none",
+                contradiction_strength=contradiction_strength if is_correction else None
+            )
+            print(f"[PREFERENCE] Upserted: {result['category']}/{result.get('scope','global')}")
         elif result["action"] == "delete":
-            delete_preference(result["category"])
+            delete_preference(result["category"], result.get("scope", "global"))
             print(f"[PREFERENCE] Deleted: {result['category']}")
 
         state["preferences"] = load_preferences()
@@ -236,11 +259,23 @@ def create_agent_node(agent_name, system_prompt):
         step = state["plan"]["steps"][state["current_step"]]
         issues = state.get("step_evaluation", {}).get("issues", "")
 
-        # Inject preferences into every agent's system prompt
-        prefs = state.get("preferences", {})
-        if prefs:
-            pref_text = "\n".join(f"- {rule}" for rule in prefs.values())
-            enriched_prompt = system_prompt + f"\n\nUser Preferences (strictly follow these):\n{pref_text}"
+        # Inject scoped preferences — hard rules vs soft suggestions by confidence
+        all_prefs = state.get("preferences", {})
+        scoped_prefs = {
+            k: v for k, v in all_prefs.items()
+            if v.get("scope") in ("global", agent_name)
+        }
+        if scoped_prefs:
+            hard_rules  = [v["rule"] for v in scoped_prefs.values()
+                           if v["confidence"] >= 0.7 and v.get("reinforcement_count", 1) >= 2]
+            soft_rules  = [v["rule"] for v in scoped_prefs.values()
+                           if v not in hard_rules and v["confidence"] >= 0.5]
+            pref_lines  = []
+            if hard_rules:
+                pref_lines.append("Rules (always follow):\n" + "\n".join(f"- {r}" for r in hard_rules))
+            if soft_rules:
+                pref_lines.append("Soft preferences (follow when reasonable):\n" + "\n".join(f"- {r}" for r in soft_rules))
+            enriched_prompt = system_prompt + "\n\n" + "\n".join(pref_lines) if pref_lines else system_prompt
         else:
             enriched_prompt = system_prompt
 
@@ -420,6 +455,40 @@ def final_evaluator_node(state):
             f"[ARTIFACTS FROM PREVIOUS QUERY]\n{json.dumps(state['artifacts'], indent=2)}"
         )
 
+    # ✅ Passive preference extractor — learns from every interaction
+    try:
+        existing_prefs = load_preferences()
+        prefs_text = "\n".join(
+            f"- {k} ({v['scope']}): {v['rule']}"
+            for k, v in existing_prefs.items()
+        ) or "None."
+
+        extractor_prompt = passive_extractor_prompt.format(
+            user_input=state["user_input"],
+            assistant_output=state["step_output"][:1000],
+            existing_preferences=prefs_text
+        )
+        extractor_response = llm.invoke(extractor_prompt).content
+        extractor_clean = re.sub(r'^```(?:json)?\n?', '', extractor_response).rstrip('`').strip()
+        extractor_result = json.loads(extractor_clean)
+
+        for signal in extractor_result.get("signals", []):
+            if signal.get("confidence", 0) >= 0.50:
+                upsert_preference(
+                    category=signal["category"],
+                    rule=signal["rule"],
+                    scope=signal.get("scope", "global"),
+                    source=signal.get("source", "implicit"),
+                    contradiction=signal.get("contradiction", False),
+                    contradiction_strength=signal.get("contradiction_strength", "none")
+                )
+                print(f"[PASSIVE] Extracted: {signal['category']} conf={signal['confidence']:.2f}")
+    except Exception as e:
+        print(f"[PASSIVE] Extractor error (non-fatal): {e}")
+
+    # Age all preferences not reinforced this run
+    increment_interactions_since_seen()
+
     return {
         "final_evaluation": {
             "approved": "yes" in verdict,
@@ -463,8 +532,11 @@ def run_agent(user_query: str):
     session_id = datetime.now().strftime("%Y%m%d%H%M%S")
     message_history = load_messages(query=user_query, limit=10)
     preferences = load_preferences()
-    message_types = classify_message(user_query)
-    print(f"[CLASSIFIER] Types detected: {message_types}")
+
+    # ✅ LLM classifier — passes recent history for correction context
+    classification = classify_message(user_query, recent_history=message_history)
+    message_types = classification.get("types", ["task"])
+    print(f"[CLASSIFIER] Types: {message_types} | Reasoning: {classification.get('reasoning','')}")
 
     initial_state = {
         "user_input":       user_query,
@@ -472,6 +544,7 @@ def run_agent(user_query: str):
         "session_id":       session_id,
         "preferences":      preferences,
         "message_types":    message_types,
+        "classification":   classification,   # ✅ full result available to preference_node
         "plan":             {},
         "current_step":     0,
         "artifacts":        {},
@@ -485,6 +558,7 @@ def run_agent(user_query: str):
     if "preference" in message_types and "task" not in message_types:
         print("[CLASSIFIER] -> preference_agent only")
         result = pref_app.invoke(initial_state)
+        increment_interactions_since_seen()
         return result["step_output"]
 
     elif "preference" in message_types and "task" in message_types:

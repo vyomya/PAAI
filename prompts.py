@@ -1,6 +1,40 @@
 from datetime import datetime, timedelta
 today = datetime.strptime('2001-01-01', '%Y-%m-%d').date()
 
+# ── LLM Classifier (replaces regex) ──────────────────────────────────────────
+classifier_prompt = """You are a message classifier for an AI executive assistant.
+
+Recent conversation (last 2 turns for correction context):
+{recent_history}
+
+Current user message: {user_input}
+
+Classify this message. It can belong to multiple types simultaneously.
+
+Types:
+- "task"        — user wants the assistant to do something (fetch emails, summarize, draft, schedule, check history, etc.)
+- "preference"  — user is expressing how they want things done, even without "always/never"
+                  Examples: "skip promotional emails", "keep it brief", "I don't care about Chase emails",
+                  "focus on job applications", "that's not useful to me"
+- "correction"  — user is correcting or pushing back on the previous assistant response
+                  Examples: "no", "actually", "that's wrong", "should be", "not that", "I meant"
+                  NOTE: only classify as correction if there IS a previous assistant response to correct
+
+Respond ONLY with valid JSON:
+{{
+  "types": ["task", "preference", "correction"],
+  "has_correction": true/false,
+  "contradiction_strength": "none" | "weak" | "partial" | "absolute",
+  "reasoning": "<one line explaining the classification>"
+}}
+
+contradiction_strength applies only when has_correction is true:
+- "weak"     — single pushback, might be one-off ("not this time")
+- "partial"  — correcting part of a rule ("except for X")
+- "absolute" — completely reversing a rule ("forget that", "never mind", "actually always")
+- "none"     — no contradiction
+"""
+
 # ── Planner ───────────────────────────────────────────────────────────────────
 planner_prompt = """You are a Planner Agent. You ALWAYS output a JSON plan, no exceptions.
 
@@ -45,19 +79,19 @@ Use calendar_agent when the user:
 3. ALWAYS return a JSON plan with at least one step
 4. ALWAYS use summarizer_agent when fetching emails — never skip this for fresh data requests
 5. ALWAYS follow summarizer_agent with priority_agent when a todo or priority list is requested
-6. history_agent has no tools — it only reads message_history from the conversation
+6. history_agent uses GetRecentMessages and SearchMessages tools to read conversation history
 
 ## Output Format
 Respond with ONLY this JSON, nothing before or after:
-{
+{{
   "steps": [
-    {
+    {{
       "id": "1",
       "agent": "<specialist>_agent",
       "outputs": ["<specific goal for this step>"]
-    }
+    }}
   ]
-}
+}}
 """
 
 # ── Step Evaluator ────────────────────────────────────────────────────────────
@@ -102,6 +136,59 @@ Does this fully satisfy the user's request?
 Respond yes or no with explanation.
 """
 
+# ── Passive Preference Extractor ──────────────────────────────────────────────
+passive_extractor_prompt = """You are a passive preference extractor for an AI executive assistant.
+
+Your job is to identify implicit preference signals from a single user interaction.
+Do NOT extract obvious task requests — only behavioral preferences about HOW the assistant should work.
+
+User message: {user_input}
+Assistant response: {assistant_output}
+
+Already saved preferences (do not re-extract these unless they were reinforced or contradicted):
+{existing_preferences}
+
+Look for signals like:
+- Implicit filtering ("skip X", "I don't care about Y", "focus on Z")
+- Format preferences ("keep it short", "use bullet points", "be detailed")  
+- Priority preferences ("X is important to me", "Y matters more")
+- Scope/domain preferences ("only job-related", "ignore promotions")
+- Behavioral corrections embedded in task requests
+
+For each signal found, determine:
+- category: snake_case name
+- rule: clear instruction for the agent
+- scope: which agent this applies to ("global" | "summarizer_agent" | "priority_agent" | "email_agent" | "calendar_agent")
+- confidence: 0.0-1.0 (how certain you are this is a real preference, not a one-off request)
+- source: "implicit" (inferred) or "correction" (user corrected output)
+- contradiction: true/false (does this contradict an existing saved preference?)
+- contradiction_strength: "none" | "weak" | "partial" | "absolute"
+
+Confidence guide:
+- 0.9+ : very clear preference signal ("I never want to see X")
+- 0.7-0.9: clear signal ("skip X", "focus on Y")
+- 0.5-0.7: possible preference, could be one-off
+- below 0.5: too weak, do not include
+
+If NO signals found, return: {{"signals": []}}
+
+Respond ONLY with valid JSON:
+{{
+  "signals": [
+    {{
+      "category": "filter_promotions",
+      "rule": "skip promotional and marketing emails",
+      "scope": "summarizer_agent",
+      "confidence": 0.75,
+      "source": "implicit",
+      "contradiction": false,
+      "contradiction_strength": "none"
+    }}
+  ]
+}}
+"""
+
+# ── History Agent ─────────────────────────────────────────────────────────────
 history_agent_prompt = """You are a History Agent. You retrieve information from past conversations using your tools.
 
 Tools available:
@@ -119,7 +206,7 @@ Rules:
 """
 
 # ── Preference Agent ──────────────────────────────────────────────────────────
-preference_agent_prompt = """You are a Preference Manager. Your only job is to extract and manage user preferences.
+preference_agent_prompt = """You are a Preference Manager. Your job is to extract and manage user preferences.
 
 Current saved preferences:
 {current_preferences}
@@ -127,18 +214,25 @@ Current saved preferences:
 User message: {user_input}
 
 Instructions:
-1. Identify what preference the user is setting or removing.
-2. Assign a short snake_case category name (e.g. "email_format", "tone", "filter_newsletters").
-3. Decide the action:
-   - If the user says "always" or sets a rule -> action: "save"
-   - If the user says "never" or wants to remove a rule -> action: "save" (store the never rule)
-   - If the user explicitly says "forget" or "remove" a preference -> action: "delete"
+1. Identify what preference the user is expressing — they do NOT need to say "always" or "never".
+   Understand intent: "I don't care about Chase emails" = filter Chase emails.
+2. Assign a short snake_case category name.
+3. Determine the scope — which agent does this apply to?
+   - "global" — applies to all agents
+   - "summarizer_agent" — filtering, what emails to include
+   - "priority_agent" — what to prioritize or deprioritize
+   - "email_agent" — tone, length, style of emails
+   - "calendar_agent" — calendar-specific behavior
+4. Decide the action:
+   - "save"   — user is setting a preference (explicit or implicit)
+   - "delete" — user explicitly says "forget" or "remove" a preference
 
 Respond ONLY with valid JSON, no extra text:
 {{
   "action": "save" or "delete",
   "category": "<snake_case_category>",
   "rule": "<the full preference rule as a clear instruction>",
+  "scope": "<global|summarizer_agent|priority_agent|email_agent|calendar_agent>",
   "confirmation": "<friendly one-line confirmation message to show the user>"
 }}
 """
