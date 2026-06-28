@@ -215,7 +215,7 @@ User message: {user_input}
 
 Instructions:
 1. Identify what preference the user is expressing — they do NOT need to say "always" or "never".
-   Understand intent: "I don't care about Chase emails" = filter Chase emails.
+   Understand intent and context to extract the underlying preference.
 2. Assign a short snake_case category name.
 3. Determine the scope — which agent does this apply to?
    - "global" — applies to all agents

@@ -10,12 +10,12 @@ from prompts import (
     planner_prompt, step_evaluator_prompt, evaluator_prompt,
     summarizer_prompt, priority_prompt, emaildraft_prompt, calendar_prompt,
     history_agent_prompt, preference_agent_prompt,
-    classifier_prompt, passive_extractor_prompt   # ✅ new
+    classifier_prompt, passive_extractor_prompt
 )
 from db import (
     init_db, load_messages, save_message, save_session,
     load_preferences, delete_preference,
-    upsert_preference, increment_interactions_since_seen  # ✅ updated
+    upsert_preference, increment_interactions_since_seen
 )
 from datetime import datetime
 
@@ -59,7 +59,7 @@ class AgentState(TypedDict):
     session_id: str
     preferences: dict
     message_types: List[str]
-    classification: dict       # ✅ full classifier result including correction info
+    classification: dict
     plan: dict
     current_step: int
     context: dict
@@ -412,7 +412,7 @@ def step_router(state):
     st_update = dict(state)
     st_update["iteration_count"] += 1
 
-    if st_update["iteration_count"] > 3:
+    if st_update["iteration_count"] > 2:
         return Send("final_evaluator", st_update)
 
     if not evaluation["approved"]:
