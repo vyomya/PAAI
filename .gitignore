@@ -2,3 +2,4 @@
 openAIkey.txt
 __pycache__
 *.db
+chroma_store
