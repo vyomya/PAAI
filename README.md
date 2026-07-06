@@ -8,7 +8,7 @@ A production-grade agentic personal assistant built with LangGraph and Alibaba C
 
 [![PAAI Demo](https://img.shields.io/badge/YouTube-Demo-red?logo=youtube)](https://www.youtube.com/watch?v=ElsC_qagOJA)
 
-[Watch the 3-minute demo on YouTube →](https://www.youtube.com/watch?v=ElsC_qagOJA)
+[Watch the 5-minute demo on YouTube →](https://www.youtube.com/watch?v=ElsC_qagOJA)
 
 ---
 
