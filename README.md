@@ -1,28 +1,46 @@
 # Personal Agentic AI Assistant (PAAI)
 
-A production-grade agentic personal assistant framework built with LangGraph, designed to orchestrate multiple specialized agents capable of reasoning, planning, and executing tasks across integrated tools including email, calendar, and long-term memory systems.
+A production-grade agentic personal assistant built with LangGraph and Alibaba Cloud's Qwen model (qwen-plus via DashScope). It orchestrates multiple specialized agents — Summarizer, Priority, Email, Calendar, and History — to manage Gmail, Google Calendar, and long-term user memory in a single conversational interface.
 
-This project demonstrates how agentic workflows can evolve beyond single-turn conversational interfaces toward sophisticated executive assistant systems for real-world applications.
+---
 
 ## Demo
-[Demo Link](https://www.youtube.com/watch?v=ElsC_qagOJA)
+
+[![PAAI Demo](https://img.shields.io/badge/YouTube-Demo-red?logo=youtube)](https://www.youtube.com/watch?v=ElsC_qagOJA)
+
+[Watch the 3-minute demo on YouTube →](https://www.youtube.com/watch?v=ElsC_qagOJA)
+
+---
+
+## Alibaba Cloud
+
+This project runs on **Alibaba Cloud Model Studio (DashScope)** using the `qwen-plus` model via OpenAI-compatible API.
+
+- [View Alibaba Cloud integration proof →](docs/alibaba_cloud_proof.md)
+
+All LLM inference — planning, classification, agent execution, preference extraction, and step evaluation — routes through DashScope's international endpoint.
+
+---
+
+## Architecture
+
+![PAAI Architecture](docs/architecture.png)
+
+The system uses LangGraph to coordinate agents through structured state transitions. An LLM-based classifier routes each message to the right flow before the planner runs. Each agent operates within a defined scope and invokes tools explicitly. A persistent memory layer stores conversation history (ChromaDB) and user preferences (SQLite) across sessions.
+
 ---
 
 ## Features
 
-- **Multi-Agent Architecture**: Built on LangGraph for coordinated agent orchestration
-- **Modular Design**: Separation of concerns across planning, execution, and tool usage layers
-- **Gmail Integration**: Full Gmail API integration for email-based workflows
-- **Calendar-Aware Planning**: Context-aware scheduling capabilities (in development)
-- **Long-Term Memory**: User preference management and persistent context (planned)
-- **Interactive Interface**: Streamlit-based UI for agent interaction and monitoring
-
----
-<img width="506" height="457" alt="image" src="https://github.com/user-attachments/assets/77e6889e-8481-4fd6-b204-4e3a156cc4d3" />
-
-## System Architecture
-
-The system leverages LangGraph to coordinate multiple specialized agents through structured state transitions. Each agent operates within a defined scope, invoking tools explicitly based on task requirements. This architecture supports extensibility, research experimentation, and production deployment scenarios.
+- **Multi-agent orchestration** — Planner, Summarizer, Priority, Email, Calendar, and History agents coordinated via LangGraph
+- **LLM-based classifier** — Replaces keyword regex; understands task, preference, and correction intent in natural language
+- **Step-level evaluation loop** — Each agent output is validated against its specific step goal and automatically retried with targeted feedback
+- **Persistent semantic memory** — ChromaDB vector embeddings for conversation retrieval; `GetRecentMessages` and `SearchMessages` tools for the history agent
+- **Dynamic preference system** — Confidence scoring, per-agent scope, passive learning from every interaction, and decay over time
+- **Gmail integration** — Full Gmail API for fetching, reading, and drafting emails
+- **Google Calendar integration** — Fetch and create calendar events
+- **FastAPI backend + Streamlit UI**
+- **Powered by Qwen** — `qwen-plus` via Alibaba Cloud DashScope
 
 ---
 
@@ -30,13 +48,22 @@ The system leverages LangGraph to coordinate multiple specialized agents through
 
 ```
 PAAI/
-├── api.py                  # Backend API for agent execution
+├── api.py                      # FastAPI backend
+├── agentic_framework.py        # LangGraph graph, all agent nodes, routing logic
+├── db.py                       # ChromaDB (messages) + SQLite (preferences, sessions)
+├── prompts.py                  # All LLM prompts — planner, agents, evaluators, classifier
+├── tool.py                     # Tool definitions — Gmail, Calendar, GetTime, history tools
+├── llm.py                      # Qwen/DashScope LLM setup
+├── gmail_api.py                # Gmail API wrapper
+├── calendar_api.py             # Google Calendar API wrapper
+├── generic_tools.py            # GetTime and utility tools
 ├── ui/
-│   └── main.py             # Streamlit UI entry point
-├── agents/                 # Agent definitions and configurations
-├── tools/                  # Tool integrations (Gmail, memory, etc.)
-├── requirements.txt        # Project dependencies
-└── README.md              # Project documentation
+│   └── main.py                 # Streamlit UI
+├── docs/
+│   ├── architecture.png        # System architecture diagram
+│   └── alibaba_cloud_proof.md  # Alibaba Cloud deployment proof
+├── requirements.txt
+└── README.md
 ```
 
 ---
@@ -45,9 +72,9 @@ PAAI/
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- Google Cloud Platform account (for Gmail API)
-- OpenAI API key
+- Python 3.9 or higher
+- Google Cloud Platform account (for Gmail and Calendar APIs)
+- Alibaba Cloud account (for Qwen API via DashScope)
 
 ### Installation
 
@@ -58,12 +85,12 @@ git clone https://github.com/vyomya/PAAI.git
 cd PAAI
 ```
 
-**2. Create and activate virtual environment**
+**2. Create and activate a virtual environment**
 
 ```bash
 python -m venv venv
-source venv/bin/activate  # macOS/Linux
-# venv\Scripts\activate   # Windows
+source venv/bin/activate       # macOS / Linux
+# venv\Scripts\activate        # Windows
 ```
 
 **3. Install dependencies**
@@ -72,28 +99,36 @@ source venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 ```
 
+---
+
 ### Configuration
 
-**Gmail API Setup**
+#### Alibaba Cloud — Qwen API (DashScope)
 
-Create the following files in the project root directory:
-
-- `credentials.json` - Download from Google Cloud Console after enabling the Gmail API
-- `token.json` - Auto-generated during first authentication
-
-**OpenAI API Key**
-
-Create a file named `openAIkey.txt` in the project root:
+1. Sign up at [alibabacloud.com](https://alibabacloud.com) (international) or [bailian.aliyun.com](https://bailian.aliyun.com) (China)
+2. Navigate to **Model Studio** and click **Activate** — this enables your free tier (70M tokens for new users)
+3. Go to **API Keys** → **Create API Key** → copy the key
+4. Create a file named `qwenkey.txt` in the project root:
 
 ```text
-sk-your-api-key-here
+sk-your-dashscope-key-here
 ```
+
+> **Regional note:** Use the international endpoint if your account was created on alibabacloud.com. China-registered accounts use a different endpoint — see `llm.py`.
+
+#### Gmail API
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com) and enable the **Gmail API** and **Google Calendar API**
+2. Create OAuth 2.0 credentials (Desktop app)
+3. Download and place the following files in the project root:
+   - `credentials.json` — downloaded from Google Cloud Console
+   - `token.json` — auto-generated on first run after OAuth login
 
 ---
 
 ## Running the Application
 
-**1. Start the backend API**
+**1. Start the FastAPI backend**
 
 ```bash
 python api.py
@@ -105,54 +140,95 @@ python api.py
 streamlit run ui/main.py
 ```
 
-The application interface will open automatically in your default browser.
+The interface will open in your browser automatically.
 
 ---
 
-## Development Roadmap
+## How It Works
 
-Active development items are tracked in the GitHub Issues section:
+```
+User message
+     ↓
+LLM Classifier  →  preference · task · correction
+     ↓
+Preference agent (if preference detected)
+     ↓
+Planner  →  generates step-by-step execution plan using qwen-plus
+     ↓
+Specialized agents  →  Summarizer · Priority · Email · Calendar · History
+     ↓
+Step evaluator  →  validates each step's output against its specific goal
+     ↓
+Final evaluator + passive preference extractor
+     ↓
+ChromaDB (messages) + SQLite (preferences, sessions)
+```
 
-- Long-term memory and preference management system
-- Calendar integration and scheduling intelligence
-- User authentication and authorization framework
-- Enhanced agent reasoning and response quality
-- UI/UX improvements and workflow optimization
+### Agents
 
-For detailed tracking of features and bugs, please refer to the Issues section of the repository.
+| Agent | Responsibility |
+|---|---|
+| `summarizer_agent` | Fetches and summarizes emails from Gmail |
+| `priority_agent` | Builds a prioritized todo list from summaries |
+| `email_agent` | Drafts and sends emails |
+| `calendar_agent` | Fetches and creates Google Calendar events |
+| `history_agent` | Retrieves relevant past conversation context |
+| `preference_agent` | Extracts and saves user preferences |
+
+### Memory
+
+| Layer | Storage | Purpose |
+|---|---|---|
+| Message history | ChromaDB | Semantic retrieval of past conversations |
+| Preferences | SQLite | Confidence-scored, scoped, decaying rules per agent |
+| Sessions | SQLite | Input/output/plan summary per run |
+
+---
+
+## Qwen / Alibaba Cloud Integration
+
+The LLM is configured in `llm.py` using LangChain's `ChatOpenAI` with DashScope's OpenAI-compatible endpoint:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    api_key=api_key,                          # from qwenkey.txt
+    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    model="qwen-plus",
+    temperature=0,
+    max_retries=2,
+)
+```
+
+No additional packages are required beyond `langchain-openai`. Tool calling, streaming, and JSON mode all work identically to OpenAI's API — only the `base_url`, `api_key`, and `model` change.
+
+For full Alibaba Cloud deployment proof, see [`docs/alibaba_cloud_proof.md`](docs/alibaba_cloud_proof.md).
 
 ---
 
 ## Contributing
 
-Contributions are welcome from researchers, engineers, and AI practitioners. Areas of particular interest include:
+Contributions are welcome. Areas of interest:
 
-- Novel agent architectures and coordination patterns
-- Memory system improvements
-- Tool integration enhancements
-- Performance optimization
-- Documentation and testing
+- Additional agent types (web search, file management, task databases)
+- Skills system — saved named workflows triggered by phrase
+- User authentication and multi-user support
+- Performance optimization and latency reduction
+- Testing and evaluation framework
 
-Please review open Issues before starting work on new features.
+Please open an issue before starting work on new features.
 
 ---
 
-## Technical Background
+## License
 
-This project explores practical implementations of agentic AI systems, focusing on:
-
-- Multi-agent coordination using graph-based state machines
-- Tool-augmented language model reasoning
-- Long-term context management
-- Real-world task execution reliability
-
-The system is designed for both research experimentation and production deployment scenarios.
-
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ---
 
 ## Contact
 
-For questions, collaboration opportunities, or technical discussions regarding agentic AI systems and LLM applications, please open an issue or reach out through GitHub.
+For questions, collaboration, or technical discussion, open an issue or reach out via GitHub.
 
-**Repository**: [https://github.com/vyomya/PAAI](https://github.com/vyomya/PAAI)
+**Repository:** [https://github.com/vyomya/PAAI](https://github.com/vyomya/PAAI)
