@@ -18,6 +18,7 @@ This project demonstrates how agentic workflows can evolve beyond single-turn co
 - **Interactive Interface**: Streamlit-based UI for agent interaction and monitoring
 
 ---
+<img width="506" height="457" alt="image" src="https://github.com/user-attachments/assets/77e6889e-8481-4fd6-b204-4e3a156cc4d3" />
 
 ## System Architecture
 
