@@ -392,14 +392,17 @@ def step_evaluator_node(state):
         return {"step_evaluation": {"approved": True, "issues": "", "repair": "continue"}}
     else:
         try:
-            output = "{" + output.split("{")[1]
-            output = output.split("}")[0] + "}"
-            output = json.loads(output)
-        except Exception:
-            print("[EVALUATOR] Parse error on rejection — approving to avoid loop")
-            return {"step_evaluation": {"approved": True, "issues": "", "repair": "continue"}}
-
-        return {
+            json_match = re.search(r'\{.*?\}', output, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                return {
+                    "step_evaluation": result,
+                    "current_step": state["current_step"],
+                    "iteration_count": state["iteration_count"]
+                }
+        except (json.JSONDecodeError, AttributeError):
+            print("[EVALUATOR] Parse error — approving to avoid loop")
+            return {
             "step_evaluation": output,
             "current_step": state["current_step"],
             "iteration_count": state["iteration_count"]

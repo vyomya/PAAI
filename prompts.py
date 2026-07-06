@@ -83,15 +83,15 @@ Use calendar_agent when the user:
 
 ## Output Format
 Respond with ONLY this JSON, nothing before or after:
-{{
+{
   "steps": [
-    {{
+    {
       "id": "1",
       "agent": "<specialist>_agent",
       "outputs": ["<specific goal for this step>"]
-    }}
+    }
   ]
-}}
+}
 """
 
 # ── Step Evaluator ────────────────────────────────────────────────────────────
@@ -170,12 +170,12 @@ Confidence guide:
 - 0.5-0.7: possible preference, could be one-off
 - below 0.5: too weak, do not include
 
-If NO signals found, return: {{"signals": []}}
+If NO signals found, return: {"signals": []}
 
 Respond ONLY with valid JSON:
-{{
+{
   "signals": [
-    {{
+    {
       "category": "filter_promotions",
       "rule": "skip promotional and marketing emails",
       "scope": "summarizer_agent",
@@ -183,9 +183,9 @@ Respond ONLY with valid JSON:
       "source": "implicit",
       "contradiction": false,
       "contradiction_strength": "none"
-    }}
+    }
   ]
-}}
+}
 """
 
 # ── History Agent ─────────────────────────────────────────────────────────────
