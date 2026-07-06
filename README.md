@@ -24,7 +24,9 @@ All LLM inference — planning, classification, agent execution, preference extr
 
 ## Architecture
 
-![PAAI Architecture](docs/architecture.png)
+PAAI Architecture
+
+<img width="528" height="498" alt="image" src="https://github.com/user-attachments/assets/7ca5ca0c-6d51-4041-9700-2b165e61a742" />
 
 The system uses LangGraph to coordinate agents through structured state transitions. An LLM-based classifier routes each message to the right flow before the planner runs. Each agent operates within a defined scope and invokes tools explicitly. A persistent memory layer stores conversation history (ChromaDB) and user preferences (SQLite) across sessions.
 
