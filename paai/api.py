@@ -15,9 +15,9 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from agentic_framework import run_agent
-from db import init_db
-from user_context import user_context
+from paai.graph import run_agent
+from paai.db import init_db, _engine
+from paai.context import user_context
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -115,8 +115,6 @@ async def readiness_check():
     every request 500s on a dead database.
     """
     from sqlalchemy import text
-
-    from db import _engine
 
     try:
         with _engine.connect() as conn:

@@ -1,11 +1,11 @@
 from langchain_core.tools import Tool
 import json
-from gmail_api import list_messages_tool, get_message_tool
-from calendar_api import list_events
-from generic_tools import get_time
-from db import search_messages, get_recent_messages
-from user_context import get_current_user
-import db
+from paai.gmail import list_messages_tool, get_message_tool
+from paai.calendar import list_events
+from paai.generic_tools import get_time
+from paai.db import search_messages, get_recent_messages
+from paai.context import get_current_user
+import paai.db
 
 def search_history(args_json: str) -> str:
     args = json.loads(args_json)

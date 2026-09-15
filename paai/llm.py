@@ -1,5 +1,5 @@
 from langchain_openai import ChatOpenAI
-from tool import tools
+from paai.tools import tools
 
 f = open('openAIkey.txt', 'r')
 api_key = f.read().strip()

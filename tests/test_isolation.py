@@ -1,7 +1,7 @@
 # test_isolation.py
 import uuid, pytest
-from db import get_or_create_user, save_message, search_messages, load_preferences
-from user_context import user_context, get_current_user, NoUserContextError
+from paai.db import get_or_create_user, save_message, search_messages, load_preferences
+from paai.context import user_context, get_current_user, NoUserContextError
 
 def test_search_is_user_scoped():
     alice = get_or_create_user("alice@test.local")

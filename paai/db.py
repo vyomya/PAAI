@@ -17,9 +17,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import sessionmaker
 
-from config import settings
-from embeddings import embed
-from models import Base, Message, OAuthConnection, Preference, Session, User
+from paai.config import settings
+from paai.embeddings import embed
+from paai.models import Base, Message, OAuthConnection, Preference, Session, User
 
 # ── Engine / session factory ──────────────────────────────────────────────────
 # One pooled engine for the process. The old code opened a fresh sqlite3

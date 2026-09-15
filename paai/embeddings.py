@@ -14,7 +14,7 @@ from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer
 
-from config import settings
+from paai.config import settings
 
 
 @lru_cache

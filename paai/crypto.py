@@ -11,7 +11,7 @@ Postgres — worth doing before you have real users, but this unblocks Phase 1.
 """
 from cryptography.fernet import Fernet, InvalidToken
 
-from config import settings
+from paai.config import settings
 
 
 class TokenCipher:
