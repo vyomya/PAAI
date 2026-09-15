@@ -3,4 +3,10 @@ openAIkey.txt
 __pycache__
 *.db
 chroma_store
+qwenkey.txt.DS_Store
 qwenkey.txt
+credentials.json
+token.json
+.env
+agent_memory.db
+chroma_store/

@@ -13,10 +13,13 @@ from prompts import (
     classifier_prompt, passive_extractor_prompt
 )
 from db import (
-    init_db, load_messages, save_message, save_session,
+    load_messages, save_message, save_session,
     load_preferences, delete_preference,
-    upsert_preference, increment_interactions_since_seen
+    upsert_preference, increment_interactions_since_seen,
+    persist_decay,
 )
+from user_context import get_current_user
+import uuid
 from datetime import datetime
 
 
@@ -54,6 +57,7 @@ def classify_message(text: str, recent_history: list = None) -> dict:
 
 # ── AgentState ────────────────────────────────────────────────────────────────
 class AgentState(TypedDict):
+    user_id: uuid.UUID
     user_input: str
     message_history: List[dict]
     session_id: str
@@ -68,11 +72,14 @@ class AgentState(TypedDict):
     step_evaluation: dict
     final_evaluation: dict
     iteration_count: int
-
+    touched_prefs: set
 
 # ── Preference Agent ──────────────────────────────────────────────────────────
 def preference_node(state):
-    current_prefs = load_preferences()
+    user_id = state["user_id"]
+    touched = state.get("touched_prefs", set())
+
+    current_prefs = load_preferences(user_id=user_id)
     prefs_text = "\n".join(
         f"- {k} ({v['scope']}): {v['rule']} [conf={v['confidence']:.2f}]"
         for k, v in current_prefs.items()
@@ -94,6 +101,7 @@ def preference_node(state):
 
         if result["action"] == "save":
             upsert_preference(
+                user_id,
                 category=result["category"],
                 rule=result["rule"],
                 scope=result.get("scope", "global"),
@@ -101,15 +109,18 @@ def preference_node(state):
                 contradiction=is_correction and contradiction_strength != "none",
                 contradiction_strength=contradiction_strength if is_correction else None
             )
+            touched.add((result["category"], result.get("scope", "global")))
             print(f"[PREFERENCE] Upserted: {result['category']}/{result.get('scope','global')}")
         elif result["action"] == "delete":
-            delete_preference(result["category"], result.get("scope", "global"))
+            delete_preference(user_id, result["category"], result.get("scope", "global"))
+            touched.add((result["category"], result.get("scope", "global")))
             print(f"[PREFERENCE] Deleted: {result['category']}")
 
-        state["preferences"] = load_preferences()
+        state["preferences"] = load_preferences(user_id)
         return {
             "step_output": result["confirmation"],
-            "preferences": state["preferences"]
+            "preferences": state["preferences"],
+            "touched_prefs": touched,
         }
     except Exception as e:
         print(f"[PREFERENCE] Parse error: {e}")
@@ -118,6 +129,7 @@ def preference_node(state):
 
 # ── History Agent ─────────────────────────────────────────────────────────────
 def history_agent_node(state):
+    _ = state["user_id"]
     step = state["plan"]["steps"][state["current_step"]]
     goal = step["outputs"][0]
 
@@ -432,6 +444,8 @@ def step_router(state):
 
 # ── Final Evaluator ───────────────────────────────────────────────────────────
 def final_evaluator_node(state):
+    user_id = state["user_id"]
+    touched = state.get("touched_prefs", set())
     prompt = evaluator_prompt.format(
         user_input=state["user_input"],
         artifacts=json.dumps(state["artifacts"]),
@@ -442,25 +456,26 @@ def final_evaluator_node(state):
     plan_summary = [step["agent"] for step in state["plan"]["steps"]]
 
     save_session(
+        user_id,
         user_input=state["user_input"],
         final_output=state["step_output"],
         plan_summary=plan_summary,
         session_id=state["session_id"]
     )
 
-    save_message(state["session_id"], "user", state["user_input"])
-    save_message(state["session_id"], "assistant", state["step_output"])
+    save_message(user_id, state["session_id"], "user", state["user_input"])
+    save_message(user_id, state["session_id"], "assistant", state["step_output"])
 
     if state["artifacts"]:
         save_message(
+            user_id,
             state["session_id"],
             "system",
             f"[ARTIFACTS FROM PREVIOUS QUERY]\n{json.dumps(state['artifacts'], indent=2)}"
         )
-
-    # ✅ Passive preference extractor — learns from every interaction
+    # Passive preference extraction — only if the user didn't explicitly correct a preference
     try:
-        existing_prefs = load_preferences()
+        existing_prefs = load_preferences(user_id)
         prefs_text = "\n".join(
             f"- {k} ({v['scope']}): {v['rule']}"
             for k, v in existing_prefs.items()
@@ -478,6 +493,7 @@ def final_evaluator_node(state):
         for signal in extractor_result.get("signals", []):
             if signal.get("confidence", 0) >= 0.50:
                 upsert_preference(
+                    user_id,
                     category=signal["category"],
                     rule=signal["rule"],
                     scope=signal.get("scope", "global"),
@@ -485,18 +501,21 @@ def final_evaluator_node(state):
                     contradiction=signal.get("contradiction", False),
                     contradiction_strength=signal.get("contradiction_strength", "none")
                 )
+                touched.add((signal["category"], signal.get("scope", "global")))
                 print(f"[PASSIVE] Extracted: {signal['category']} conf={signal['confidence']:.2f}")
     except Exception as e:
         print(f"[PASSIVE] Extractor error (non-fatal): {e}")
 
     # Age all preferences not reinforced this run
-    increment_interactions_since_seen()
+    increment_interactions_since_seen(user_id, reinforced_keys=touched)
+    persist_decay(user_id)
 
     return {
         "final_evaluation": {
             "approved": "yes" in verdict,
             "verdict": verdict
-        }
+        },
+        "touched_prefs": touched
     }
 
 
@@ -528,26 +547,29 @@ task_graph.add_edge("final_evaluator", END)
 task_app = task_graph.compile()
 
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
-init_db()
+def run_agent(user_query: str, user_id: uuid.UUID = None, session_id: str = None):
+    """
+    user_id is optional because it can also arrive via user_context() from the
+    API layer. Explicit argument wins; context is the fallback.
+    """
+    if user_id is None:
+        user_id = get_current_user()   # raises if truly unscoped
 
-def run_agent(user_query: str):
-    session_id = datetime.now().strftime("%Y%m%d%H%M%S")
-    message_history = load_messages(query=user_query, limit=10)
-    preferences = load_preferences()
+    session_id = session_id or datetime.now().strftime("%Y%m%d%H%M%S")
+    message_history = load_messages(user_id, query=user_query, limit=10)
+    preferences = load_preferences(user_id)
 
-    # ✅ LLM classifier — passes recent history for correction context
     classification = classify_message(user_query, recent_history=message_history)
     message_types = classification.get("types", ["task"])
-    print(f"[CLASSIFIER] Types: {message_types} | Reasoning: {classification.get('reasoning','')}")
 
     initial_state = {
+        "user_id":          user_id,
         "user_input":       user_query,
         "message_history":  message_history,
         "session_id":       session_id,
         "preferences":      preferences,
         "message_types":    message_types,
-        "classification":   classification,   # ✅ full result available to preference_node
+        "classification":   classification,
         "plan":             {},
         "current_step":     0,
         "artifacts":        {},
@@ -555,30 +577,35 @@ def run_agent(user_query: str):
         "step_output":      "",
         "step_evaluation":  {},
         "final_evaluation": {},
-        "iteration_count":  0
+        "iteration_count":  0,
+        "touched_prefs":    set(),
     }
 
     if "preference" in message_types and "task" not in message_types:
-        print("[CLASSIFIER] -> preference_agent only")
         result = pref_app.invoke(initial_state)
-        increment_interactions_since_seen()
-        return result["step_output"]
+        increment_interactions_since_seen(
+            user_id, reinforced_keys=result.get("touched_prefs", set())
+        )
+        persist_decay(user_id)
+        return result["step_output"], session_id
 
     elif "preference" in message_types and "task" in message_types:
-        print("[CLASSIFIER] -> preference_agent then task")
         pref_result = pref_app.invoke(initial_state)
-        print(f"[PREFERENCE] {pref_result['step_output']}")
-        initial_state["preferences"] = load_preferences()
+        initial_state["preferences"] = load_preferences(user_id)
+        initial_state["touched_prefs"] = pref_result.get("touched_prefs", set())
         result = task_app.invoke(initial_state)
-        return f"{pref_result['step_output']}\n\n{result['step_output']}"
+        return f"{pref_result['step_output']}\n\n{result['step_output']}", session_id
 
     else:
-        print("[CLASSIFIER] -> planner")
         result = task_app.invoke(initial_state)
-        return result["step_output"]
-
+        return result["step_output"], session_id
 
 if __name__ == "__main__":
+    import os
+    from user_context import user_context
+
+    dev_user = uuid.UUID(os.environ["DEV_USER_ID"])
     user_query = input("Enter your query: ")
-    response = run_agent(user_query)
+    with user_context(dev_user):
+        response, _ = run_agent(user_query)
     print(response)
