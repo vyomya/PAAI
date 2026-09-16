@@ -1,9 +1,21 @@
 from langchain_core.tools import Tool
 import json
-from gmail_api import list_messages_tool, get_message_tool
-from calendar_api import list_events
-from generic_tools import get_time
-from db import search_messages, get_recent_messages
+from paai.gmail import list_messages_tool, get_message_tool
+from paai.calendar import list_events
+from paai.generic_tools import get_time
+from paai.db import search_messages, get_recent_messages
+from paai.context import get_current_user
+import paai.db
+
+def search_history(args_json: str) -> str:
+    args = json.loads(args_json)
+    user_id = get_current_user()          # NOT args["user_id"]
+    hits = db.search_messages_scored(
+        user_id,
+        query=args["query"],
+        limit=args.get("limit", 10),
+    )
+    return json.dumps(hits)
 
 def web_search(query: str) -> str:
     return f"Stub: Search results for '{query}'"
