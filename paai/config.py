@@ -46,7 +46,13 @@ class Settings(BaseSettings):
     # ── Dev convenience ───────────────────────────────────────────────────
     # Email of the single seeded user, used until Phase 2 adds real auth.
     dev_user_email: str = "dev@paai.local"
+    jwt_secret: str = ""
+    base_url: str = "http://localhost:8000"
+    frontend_url: str = "http://localhost:8501"
+    dev_mode: bool = True
 
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
 
 @lru_cache
 def get_settings() -> Settings:

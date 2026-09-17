@@ -14,31 +14,11 @@ import json
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
-def create_calendar_service(credentials_json: str = None, scopes=None):
-    """Create a Google Calendar API service client.
+from paai.db import get_valid_access_token
 
-    If credentials_json is provided, a service account file is used.
-    Otherwise, application default credentials are used.
-    """
-    creds = None
-
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json',
-                SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-
-    return build('calendar', 'v3', credentials=creds)
+def get_service():
+    creds = Credentials(token=get_valid_access_token("google"))
+    return build("calendar", "v3", credentials=creds)
 
 
 def list_calendars(service):
