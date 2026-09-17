@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from paai.config import settings
 from paai.embeddings import embed
-from paai.models import Base, Message, OAuthConnection, Preference, Session, User
+from paai.models import Base, Message, OAuthConnection, Preference, Session, User, RefreshToken
 
 # ── Engine / session factory ──────────────────────────────────────────────────
 # One pooled engine for the process. The old code opened a fresh sqlite3
@@ -463,3 +463,136 @@ def list_oauth_providers(user_id: uuid.UUID) -> list[str]:
                 )
             ).all()
         )
+
+def get_or_create_user_from_oauth(
+    provider: str,
+    subject: str,
+    email: str,
+    email_verified: bool,
+    display_name: str | None = None,
+) -> uuid.UUID:
+    """
+    Resolve a provider identity to a user row.
+ 
+    Lookup order matters:
+      1. (auth_provider, auth_subject) — the stable identity. Emails change;
+         the provider's subject does not.
+      2. verified email — links Google and Microsoft logins for the same person
+         into one account instead of creating duplicates.
+      3. create new.
+ 
+    Step 2 only runs when the provider says the email is verified. Without that
+    check, signing up at a provider that does not verify email addresses would
+    let someone claim an existing account by registering the same address.
+    """
+    with db_session() as s:
+        user = s.scalar(
+            select(User).where(
+                User.auth_provider == provider, User.auth_subject == subject
+            )
+        )
+        if user:
+            return user.id
+ 
+        if email_verified:
+            user = s.scalar(select(User).where(User.email == email))
+            if user:
+                # First login via this provider for an existing account.
+                if not user.auth_provider:
+                    user.auth_provider = provider
+                    user.auth_subject = subject
+                return user.id
+ 
+        user = User(
+            email=email,
+            display_name=display_name,
+            auth_provider=provider,
+            auth_subject=subject,
+        )
+        s.add(user)
+        s.flush()
+        return user.id
+ 
+ 
+def store_refresh_token(user_id: uuid.UUID, jti: str, expires_at: datetime):
+    with db_session() as s:
+        s.add(RefreshToken(user_id=user_id, jti=jti, expires_at=expires_at))
+ 
+ 
+def is_refresh_token_valid(jti: str) -> bool:
+    with db_session() as s:
+        row = s.scalar(select(RefreshToken).where(RefreshToken.jti == jti))
+        if row is None or row.revoked:
+            return False
+        return row.expires_at > datetime.now(timezone.utc)
+ 
+ 
+def revoke_refresh_token(jti: str):
+    with db_session() as s:
+        s.execute(
+            update(RefreshToken).where(RefreshToken.jti == jti).values(revoked=True)
+        )
+ 
+ 
+def revoke_all_refresh_tokens(user_id: uuid.UUID):
+    """'Sign out everywhere'. Also what you call if an account is compromised."""
+    with db_session() as s:
+        s.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False))
+            .values(revoked=True)
+        )
+ 
+ 
+def delete_oauth_connection(user_id: uuid.UUID, provider: str):
+    """
+    Soft disconnect. Consider also calling the provider's revoke endpoint so the
+    grant disappears from the user's Google/Microsoft account page — users
+    reasonably expect 'disconnect' to mean that, not just 'stop using it'.
+    """
+    with db_session() as s:
+        s.execute(
+            update(OAuthConnection)
+            .where(
+                OAuthConnection.user_id == user_id,
+                OAuthConnection.provider == provider,
+            )
+            .values(is_active=False)
+        )
+ 
+ 
+def get_valid_access_token(user_id: uuid.UUID, provider: str) -> str:
+    """
+    Access token for a provider API call, refreshed if expired.
+ 
+    Every Gmail/Graph call should go through this rather than reading the stored
+    token directly — provider access tokens last about an hour, so anything else
+    works in testing and breaks the next morning.
+    """
+    from paai.db import get_oauth_connection, upsert_oauth_connection
+    from paai.context import get_current_user
+    from paai.oauth import expires_at_from, refresh_access_token_sync
+
+    if user_id is None:
+        user_id = get_current_user()
+        
+    conn = get_oauth_connection(user_id, provider)
+    if not conn:
+        raise RuntimeError(f"No {provider} connection for user {user_id}")
+ 
+    expires_at = conn.get("expires_at")
+    if expires_at and expires_at > datetime.now(timezone.utc):
+        return conn["access_token"]
+ 
+    tokens = refresh_access_token_sync(provider, conn["refresh_token"])
+    upsert_oauth_connection(
+        user_id=user_id,
+        provider=provider,
+        access_token=tokens["access_token"],
+        refresh_token=tokens.get("refresh_token"),   # often absent; do not clobber
+        expires_at=expires_at_from(tokens),
+        account_email=conn.get("account_email"),
+        scopes=conn.get("scopes"),
+    )
+    return tokens["access_token"]
+ 

@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from paai.graph import run_agent
 from paai.db import init_db, _engine
 from paai.context import user_context
+from paai.routes_auth import router as auth_router
+from paai.deps import current_user, require_mailbox
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -32,36 +34,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PAAI", lifespan=lifespan)
-
-
-# ── User identity ─────────────────────────────────────────────────────────────
-def current_user() -> uuid.UUID:
-    """
-    PHASE 2 REPLACES THIS FUNCTION AND NOTHING ELSE.
-
-    It becomes roughly:
-
-        async def current_user(
-            creds: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
-        ) -> uuid.UUID:
-            claims = verify_jwt(creds.credentials)
-            return get_or_create_user_from_claims(claims)
-    """
-    raw = os.environ.get("DEV_USER_ID")
-    if not raw:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "DEV_USER_ID is not set. Seed a user and add its UUID to .env:\n"
-                "  python -c \"from db import get_or_create_user; "
-                "from config import settings; "
-                "print(get_or_create_user(settings.dev_user_email))\""
-            ),
-        )
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        raise HTTPException(status_code=500, detail="DEV_USER_ID is not a valid UUID")
+app.include_router(auth_router)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -80,6 +53,7 @@ class AgentResponse(BaseModel):
 async def call_agent(
     request: AgentRequest,
     user_id: uuid.UUID = Depends(current_user),
+    mailbox_id: str = Depends(require_mailbox),
 ) -> AgentResponse:
     """
     run_agent is synchronous and does blocking LLM calls, so it must not run

@@ -201,3 +201,29 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+class RefreshToken(Base):
+    """
+    Server-side record of issued refresh tokens, keyed by jti.
+
+    A JWT cannot be revoked — it is valid until it expires. Without this table,
+    a stolen 30-day refresh token is a 30-day compromise with no way to end it,
+    and "log out" would be a lie told to the browser.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (Index("ix_refresh_user_active", "user_id", "revoked"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    jti: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
