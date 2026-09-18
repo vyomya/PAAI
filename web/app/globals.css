@@ -1,0 +1,97 @@
+:root {
+  /* Lighter, with real separation between page, panel and message surfaces */
+  --paper: #ffffff;
+  --panel: #f7f7f4;
+  --sunk: #f0efe9;
+  --raised: #ffffff;
+
+  --ink: #1a2436;
+  --ink-soft: #626b7d;
+  --ink-faint: #9aa1ae;
+
+  --rule: #e6e5de;
+  --rule-soft: #f0efe9;
+
+  --agent: #2d6e68;
+  --agent-wash: #eef4f3;
+  --flag: #9a6b18;
+  --flag-wash: #faf4e8;
+  --alert: #b3423a;
+
+  --sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --serif: var(--font-serif), Georgia, serif;
+
+  /* One dial for the whole interface. Every size below is in rem, so changing
+     this scales the entire UI proportionally — nudge it if 19 is still small
+     on your display, or drop it to 16 on a laptop. */
+  --base: 19px;
+  --rail: 340px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1e222a;
+    --panel: #252a33;
+    --sunk: #2d323c;
+    --raised: #262b34;
+
+    --ink: #eceadf;
+    --ink-soft: #9aa2af;
+    --ink-faint: #6b7381;
+
+    --rule: #3a404b;
+    --rule-soft: #2f343d;
+
+    --agent: #7cc0b8;
+    --agent-wash: #1d2a2a;
+    --flag: #d6a44c;
+    --flag-wash: #2a2419;
+    --alert: #e0776d;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--base);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: inherit; }
+button { font: inherit; cursor: pointer; }
+
+:focus-visible {
+  outline: 2px solid var(--agent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+::selection { background: var(--agent-wash); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-faint);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

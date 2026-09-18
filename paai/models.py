@@ -183,6 +183,7 @@ class Preference(Base):
 class Session(Base):
     __tablename__ = "sessions"
     __table_args__ = (Index("ix_sessions_user_created", "user_id", "created_at"),)
+    title: Mapped[str | None] = mapped_column(String(200))
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
