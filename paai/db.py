@@ -12,14 +12,15 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine, select, text, update
+from sqlalchemy import create_engine, select, text, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import sessionmaker
-
 from paai.config import settings
 from paai.embeddings import embed
 from paai.models import Base, Message, OAuthConnection, Preference, Session, User, RefreshToken
+from paai.context import get_current_user
+from paai.oauth import expires_at_from, refresh_access_token_sync
 
 # ── Engine / session factory ──────────────────────────────────────────────────
 # One pooled engine for the process. The old code opened a fresh sqlite3
@@ -406,7 +407,7 @@ def upsert_oauth_connection(
     account_email: str | None = None,
     scopes: list[str] | None = None,
 ):
-    from crypto import get_cipher
+    from paai.crypto import get_cipher
 
     cipher = get_cipher()
     with db_session() as s:
@@ -430,7 +431,7 @@ def upsert_oauth_connection(
 
 
 def get_oauth_connection(user_id: uuid.UUID, provider: str) -> dict | None:
-    from crypto import get_cipher
+    from paai.crypto import get_cipher
 
     cipher = get_cipher()
     with db_session() as s:
@@ -561,38 +562,216 @@ def delete_oauth_connection(user_id: uuid.UUID, provider: str):
         )
  
  
-def get_valid_access_token(user_id: uuid.UUID, provider: str) -> str:
+def get_valid_access_token(provider: str, user_id: uuid.UUID | None = None) -> str:
     """
     Access token for a provider API call, refreshed if expired.
- 
-    Every Gmail/Graph call should go through this rather than reading the stored
-    token directly — provider access tokens last about an hour, so anything else
-    works in testing and breaks the next morning.
+
+    user_id defaults to the request's user from context — same reason tools
+    read it there rather than taking it as an argument: if the LLM can supply
+    it, the LLM can change it.
     """
-    from paai.db import get_oauth_connection, upsert_oauth_connection
-    from paai.context import get_current_user
-    from paai.oauth import expires_at_from, refresh_access_token_sync
+    
 
     if user_id is None:
         user_id = get_current_user()
-        
+
     conn = get_oauth_connection(user_id, provider)
     if not conn:
-        raise RuntimeError(f"No {provider} connection for user {user_id}")
- 
+        raise RuntimeError(f"No {provider} connection for this user.")
+
     expires_at = conn.get("expires_at")
-    if expires_at and expires_at > datetime.now(timezone.utc):
+    if expires_at and expires_at > datetime.now(timezone.utc) + timedelta(seconds=60):
         return conn["access_token"]
- 
+
     tokens = refresh_access_token_sync(provider, conn["refresh_token"])
     upsert_oauth_connection(
         user_id=user_id,
         provider=provider,
         access_token=tokens["access_token"],
-        refresh_token=tokens.get("refresh_token"),   # often absent; do not clobber
+        refresh_token=tokens.get("refresh_token"),
         expires_at=expires_at_from(tokens),
         account_email=conn.get("account_email"),
         scopes=conn.get("scopes"),
     )
     return tokens["access_token"]
+ 
+def list_sessions(user_id: uuid.UUID, limit: int = 50) -> list[dict]:
+    """
+    Recent conversations with a preview, for the sidebar.
+ 
+    Groups messages by session_id rather than reading the sessions table,
+    because a conversation exists as soon as there are messages — the sessions
+    row is only written by final_evaluator_node, so a conversation that errored
+    mid-run would otherwise be invisible.
+    """
+    with db_session() as s:
+        rows = s.execute(
+            select(
+                Message.session_id,
+                func.min(Message.created_at).label("started"),
+                func.max(Message.created_at).label("updated"),
+                func.count(Message.id).label("message_count"),
+            )
+            .where(Message.user_id == user_id, Message.role != "system")
+            .group_by(Message.session_id)
+            .order_by(func.max(Message.created_at).desc())
+            .limit(limit)
+        ).all()
+ 
+        out = []
+        for session_id, started, updated, count in rows:
+            # Title: the stored one if set, else the first thing the user said.
+            stored = s.scalar(
+                select(Session.title).where(
+                    Session.user_id == user_id, Session.session_id == session_id
+                )
+            )
+            if not stored:
+                stored = s.scalar(
+                    select(Message.content)
+                    .where(
+                        Message.user_id == user_id,
+                        Message.session_id == session_id,
+                        Message.role == "user",
+                    )
+                    .order_by(Message.created_at)
+                    .limit(1)
+                )
+ 
+            title = (stored or "Untitled").strip()
+            if len(title) > 60:
+                title = title[:57] + "..."
+ 
+            out.append(
+                {
+                    "session_id": session_id,
+                    "title": title,
+                    "started_at": started.isoformat(),
+                    "updated_at": updated.isoformat(),
+                    "message_count": count,
+                }
+            )
+        return out
+ 
+ 
+def get_session_messages(user_id: uuid.UUID, session_id: str) -> list[dict]:
+    """
+    Full conversation, oldest first.
+ 
+    System rows hold artifact JSON dumps written for the agent's own context —
+    they are not conversation and would look like garbage in the UI, so they
+    are excluded here.
+    """
+    with db_session() as s:
+        rows = s.scalars(
+            select(Message)
+            .where(
+                Message.user_id == user_id,
+                Message.session_id == session_id,
+                Message.role != "system",
+            )
+            .order_by(Message.created_at)
+        ).all()
+ 
+    return [
+        {
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in rows
+    ]
+ 
+ 
+def rename_session(user_id: uuid.UUID, session_id: str, title: str):
+    with db_session() as s:
+        s.execute(
+            update(Session)
+            .where(Session.user_id == user_id, Session.session_id == session_id)
+            .values(title=title[:200])
+        )
+ 
+ 
+def delete_session(user_id: uuid.UUID, session_id: str):
+    """
+    Hard delete — a conversation the user removed should leave no trace, and
+    that includes removing it from the History Agent's searchable memory.
+    """
+    with db_session() as s:
+        s.execute(
+            sa_delete(Message).where(
+                Message.user_id == user_id, Message.session_id == session_id
+            )
+        )
+        s.execute(
+            sa_delete(Session).where(
+                Session.user_id == user_id, Session.session_id == session_id
+            )
+        )
+ 
+ 
+def user_stats(user_id: uuid.UUID) -> dict:
+    """Counts for the profile page."""
+    from paai.models import Preference
+ 
+    with db_session() as s:
+        messages = s.scalar(
+            select(func.count(Message.id)).where(Message.user_id == user_id)
+        )
+        conversations = s.scalar(
+            select(func.count(func.distinct(Message.session_id))).where(
+                Message.user_id == user_id
+            )
+        )
+        preferences = s.scalar(
+            select(func.count(Preference.id)).where(
+                Preference.user_id == user_id, Preference.status == "active"
+            )
+        )
+        first_seen = s.scalar(
+            select(func.min(Message.created_at)).where(Message.user_id == user_id)
+        )
+ 
+    return {
+        "messages": messages or 0,
+        "conversations": conversations or 0,
+        "preferences": preferences or 0,
+        "first_seen": first_seen.isoformat() if first_seen else None,
+    }
+ 
+ 
+def list_preferences_for_display(user_id: uuid.UUID) -> list[dict]:
+    """
+    What PAAI has learned, for the profile page.
+ 
+    Shows decayed confidence rather than stored confidence — that is the number
+    actually used when deciding whether to apply a rule, so it is the honest one
+    to show the user.
+    """
+    from paai.db import _DECAY_FLOORS, DECAY_RATE
+    from paai.models import Preference
+ 
+    with db_session() as s:
+        rows = s.scalars(
+            select(Preference)
+            .where(Preference.user_id == user_id, Preference.status == "active")
+            .order_by(Preference.confidence.desc())
+        ).all()
+ 
+    out = []
+    for p in rows:
+        floor = _DECAY_FLOORS.get(p.source, 0.30)
+        decayed = max(floor, p.confidence - (DECAY_RATE * p.interactions_since_seen))
+        out.append(
+            {
+                "category": p.category,
+                "rule": p.rule,
+                "scope": p.scope,
+                "confidence": round(decayed, 2),
+                "source": p.source,
+                "reinforcement_count": p.reinforcement_count,
+                "updated_at": p.updated_at.isoformat(),
+            }
+        )
+    return out
  

@@ -19,7 +19,11 @@ from paai.graph import run_agent
 from paai.db import init_db, _engine
 from paai.context import user_context
 from paai.routes_auth import router as auth_router
+from paai.routes_sessions import router as sessions_router
+from paai.routes_profile import router as profile_router
 from paai.deps import current_user, require_mailbox
+from fastapi.middleware.cors import CORSMiddleware
+from paai.config import settings
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -35,7 +39,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PAAI", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(sessions_router)
+app.include_router(profile_router)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_url],   # exact origin, never "*"
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 class AgentRequest(BaseModel):
@@ -46,7 +59,7 @@ class AgentRequest(BaseModel):
 class AgentResponse(BaseModel):
     response: str
     session_id: str
-
+    plan: list[dict] = []
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.post("/agent", response_model=AgentResponse)

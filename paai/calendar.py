@@ -39,7 +39,7 @@ def list_calendars(service):
 
 def list_events(json_str):
     """Retrieve events from a calendar."""
-    service = create_calendar_service()
+    service = get_service()
     
     try:
         params = json.loads(json_str)
