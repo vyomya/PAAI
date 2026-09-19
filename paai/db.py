@@ -25,13 +25,28 @@ from paai.oauth import expires_at_from, refresh_access_token_sync
 # ── Engine / session factory ──────────────────────────────────────────────────
 # One pooled engine for the process. The old code opened a fresh sqlite3
 # connection per call, which would exhaust a managed Postgres instantly.
-_engine = create_engine(
-    settings.database_url,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_pre_ping=True,   # survives the connection drops managed PG does on idle
-    echo=settings.db_echo,
-)
+# _engine = create_engine(
+#     settings.database_url,
+#     pool_size=settings.db_pool_size,
+#     max_overflow=settings.db_max_overflow,
+#     pool_pre_ping=True,   # survives the connection drops managed PG does on idle
+#     echo=settings.db_echo,
+# )
+_engine = None
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        if not settings.database_url:
+            raise RuntimeError("DATABASE_URL is not set")
+        _engine = create_engine(
+            settings.database_url,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_pre_ping=True,
+        )
+    return _engine  
+_engine = get_engine()  # initialize at import time so Alembic can see it
 SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
 
 
@@ -774,4 +789,3 @@ def list_preferences_for_display(user_id: uuid.UUID) -> list[dict]:
             }
         )
     return out
- 

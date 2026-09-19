@@ -32,7 +32,7 @@ from paai.db import (
     list_oauth_providers,
     revoke_refresh_token,
     store_refresh_token,
-    upsert_oauth_connection,
+    upsert_oauth_connection,is_refresh_token_valid
 )
 from paai.deps import current_user
 from paai.oauth import (
@@ -44,6 +44,10 @@ from paai.oauth import (
     fetch_userinfo,
     generate_pkce,
 )
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
+
+from paai.oauth_state import consume_state, issue_state
 
 router = APIRouter()
 
@@ -51,11 +55,10 @@ router = APIRouter()
 # callback. In-memory is fine for a single instance; move to Redis (or a signed
 # cookie) as soon as you run more than one replica in Phase 3, or logins will
 # fail whenever the callback lands on a different instance than the start.
-_pending: dict[str, dict] = {}
 
 
-def _redirect_uri(kind: str, provider: str) -> str:
-    return f"{settings.base_url}/{kind}/{provider}/callback"
+def _redirect_uri(provider: str) -> str:
+    return f"{settings.base_url}/auth/{provider}/callback"
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -65,40 +68,57 @@ async def login(provider: str):
         raise HTTPException(status_code=400, detail="Unsupported provider")
 
     verifier, challenge = generate_pkce()
-    state = uuid.uuid4().hex
-    _pending[state] = {
-        "verifier": verifier,
-        "provider": provider,
-        "kind": "auth",
-        "created": datetime.now(timezone.utc),
-    }
 
-    return RedirectResponse(
-        build_authorize_url(
-            provider,
-            _redirect_uri("auth", provider),
-            LOGIN_SCOPES[provider],
-            state,
-            challenge,
-        )
+    # The redirect carries the state cookie, so build the response first.
+    response = RedirectResponse(url="about:blank")
+    state = issue_state(response, provider, kind="auth", verifier=verifier)
+    response.headers["location"] = build_authorize_url(
+        provider, _redirect_uri(provider), LOGIN_SCOPES[provider], state, challenge
     )
-
+    return response
 
 @router.get("/auth/{provider}/callback")
-async def auth_callback(provider: str, code: str = "", state: str = "", error: str = ""):
+async def auth_callback(
+    provider: str,
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+):
     if error:
-        return RedirectResponse(f"{settings.frontend_url}/login?error={error}")
+        return RedirectResponse(f"{settings.frontend_url}/?error={error}")
 
-    pending = _pending.pop(state, None)
-    if not pending or pending["provider"] != provider or pending["kind"] != "auth":
-        # Unknown state means CSRF, a replayed callback, or a restarted server.
-        raise HTTPException(status_code=400, detail="Invalid or expired state")
+    response = RedirectResponse(url="about:blank")
+    pending = consume_state(request, response, state, provider)
 
     tokens = await exchange_code(
-        provider, code, _redirect_uri("auth", provider), pending["verifier"]
+        provider, code, _redirect_uri(provider), pending.verifier
     )
     info = await fetch_userinfo(provider, tokens["access_token"])
 
+    if pending.kind == "connect":
+        if not pending.user_id:
+            raise HTTPException(status_code=400, detail="No session for connect flow")
+        if not tokens.get("refresh_token"):
+            raise HTTPException(
+                status_code=400,
+                detail="Provider returned no refresh token — retry.",
+            )
+        upsert_oauth_connection(
+            user_id=uuid.UUID(pending.user_id),
+            provider=provider,
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
+            expires_at=expires_at_from(tokens),
+            account_email=info["email"],
+            scopes=tokens.get("scope", "").split(),
+        )
+        response.headers["location"] = (
+            f"{settings.frontend_url}/settings?connected={provider}"
+        )
+        return response
+
+    # login
     if not info["email"]:
         raise HTTPException(status_code=400, detail="Provider returned no email")
 
@@ -114,8 +134,8 @@ async def auth_callback(provider: str, code: str = "", state: str = "", error: s
     refresh, jti, expires_at = mint_refresh_token(user_id)
     store_refresh_token(user_id, jti, expires_at)
 
-    response = RedirectResponse(f"{settings.frontend_url}/chat")
     set_auth_cookies(response, access, refresh)
+    response.headers["location"] = f"{settings.frontend_url}/chat"
     return response
 
 
@@ -127,6 +147,8 @@ async def refresh_session(request: Request):
         raise HTTPException(status_code=401, detail="No refresh token")
 
     claims = decode_token(token, expected_type="refresh")
+    if not is_refresh_token_valid(claims["jti"]):
+        raise HTTPException(status_code=401, detail="Session ended")
     user_id = uuid.UUID(claims["sub"])
 
     # Rotation: the old jti dies as the new one is issued, so a stolen refresh
@@ -169,73 +191,25 @@ async def me(user_id: uuid.UUID = Depends(current_user)):
         "connected_mailboxes": list_oauth_providers(user_id),
     }
 
-
-# ── Mailbox connection (second consent) ───────────────────────────────────────
 @router.get("/connect/{provider}/start")
 async def connect_start(provider: str, user_id: uuid.UUID = Depends(current_user)):
-    """
-    Requires an existing session — you must be logged in before granting
-    mailbox access, so the tokens have a user to attach to.
-    """
     if provider not in MAILBOX_SCOPES:
         raise HTTPException(status_code=400, detail="Unsupported provider")
 
     verifier, challenge = generate_pkce()
-    state = uuid.uuid4().hex
-    _pending[state] = {
-        "verifier": verifier,
-        "provider": provider,
-        "kind": "connect",
-        "user_id": user_id,
-        "created": datetime.now(timezone.utc),
-    }
-
-    return RedirectResponse(
-        build_authorize_url(
-            provider,
-            _redirect_uri("connect", provider),
-            LOGIN_SCOPES[provider] + MAILBOX_SCOPES[provider],
-            state,
-            challenge,
-            prompt_consent=True,   # force a refresh_token even on repeat consent
-        )
+    response = RedirectResponse(url="about:blank")
+    state = issue_state(
+        response, provider, kind="connect", verifier=verifier, user_id=user_id
     )
-
-
-@router.get("/connect/{provider}/callback")
-async def connect_callback(
-    provider: str, code: str = "", state: str = "", error: str = ""
-):
-    if error:
-        return RedirectResponse(f"{settings.frontend_url}/settings?error={error}")
-
-    pending = _pending.pop(state, None)
-    if not pending or pending["kind"] != "connect":
-        raise HTTPException(status_code=400, detail="Invalid or expired state")
-
-    tokens = await exchange_code(
-        provider, code, _redirect_uri("connect", provider), pending["verifier"]
+    response.headers["location"] = build_authorize_url(
+        provider,
+        _redirect_uri(provider),
+        LOGIN_SCOPES[provider] + MAILBOX_SCOPES[provider],
+        state,
+        challenge,
+        prompt_consent=True,
     )
-    info = await fetch_userinfo(provider, tokens["access_token"])
-
-    if not tokens.get("refresh_token"):
-        # Without this, access dies in ~1 hour and the agents break silently.
-        raise HTTPException(
-            status_code=400,
-            detail="Provider returned no refresh token — retry with consent prompt.",
-        )
-
-    upsert_oauth_connection(
-        user_id=pending["user_id"],
-        provider=provider,
-        access_token=tokens["access_token"],
-        refresh_token=tokens["refresh_token"],
-        expires_at=expires_at_from(tokens),
-        account_email=info["email"],
-        scopes=tokens.get("scope", "").split(),
-    )
-
-    return RedirectResponse(f"{settings.frontend_url}/settings?connected={provider}")
+    return response
 
 
 @router.delete("/connect/{provider}")

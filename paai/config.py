@@ -22,10 +22,10 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_echo: bool = False
 
-    # ── LLM (Alibaba Cloud DashScope / Qwen) ──────────────────────────────
+    # ── LLM ──────────────────────────────
     dashscope_api_key: str = ""
-    dashscope_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    llm_model: str = "qwen-plus"
+    # dashscope_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    llm_model: str = "gpt-4o-mini"
 
     # ── Embeddings ────────────────────────────────────────────────────────
     # Must stay in sync with the vector(N) column in models.py.
