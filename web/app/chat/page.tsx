@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Shell from "@/components/Shell";
 import Markdown from "@/components/Markdown";
@@ -19,7 +19,7 @@ import {
 
 type Turn = { role: "you" | "assistant"; text: string; plan?: PlanStep[] };
 
-export default function ChatPage() {
+function ChatInner() {
   const router = useRouter();
   const params = useSearchParams();
   const urlSession = params.get("s") ?? undefined;
@@ -462,5 +462,12 @@ export default function ChatPage() {
         }
       `}</style>
     </Shell>
+  );
+}
+export default function ChatPage() {
+  return (
+    <Suspense fallback={null}>
+      <ChatInner />
+    </Suspense>
   );
 }
