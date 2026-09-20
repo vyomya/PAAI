@@ -8,7 +8,7 @@
  * Access tokens last 15 minutes. A 401 triggers one refresh and one retry.
  */
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
 export class AuthError extends Error {}
 export class MailboxRequiredError extends Error {

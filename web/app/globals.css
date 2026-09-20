@@ -24,7 +24,7 @@
   /* One dial for the whole interface. Every size below is in rem, so changing
      this scales the entire UI proportionally — nudge it if 19 is still small
      on your display, or drop it to 16 on a laptop. */
-  --base: 19px;
+  --base: 17px;
   --rail: 340px;
 }
 
