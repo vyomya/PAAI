@@ -29,7 +29,7 @@ from paai.config import settings
 # ── Scope sets ────────────────────────────────────────────────────────────────
 LOGIN_SCOPES = {
     "google": ["openid", "email", "profile"],
-    "microsoft": ["openid", "email", "profile", "offline_access"],
+    "microsoft": ["openid", "email", "profile", "offline_access", "User.Read"],
 }
 
 # Requested only at /connect time. Audit these against what the agents actually
