@@ -25,6 +25,7 @@ from paai.auth import (
     mint_refresh_token,
     set_auth_cookies,
 )
+from paai.access import can_connect_google
 from paai.config import settings
 from paai.db import (
     delete_oauth_connection,
@@ -32,7 +33,8 @@ from paai.db import (
     list_oauth_providers,
     revoke_refresh_token,
     store_refresh_token,
-    upsert_oauth_connection,is_refresh_token_valid
+    upsert_oauth_connection,is_refresh_token_valid,
+    get_user_by_id
 )
 from paai.deps import current_user
 from paai.oauth import (
@@ -181,7 +183,8 @@ async def logout(request: Request):
 
 @router.get("/auth/me")
 async def me(user_id: uuid.UUID = Depends(current_user)):
-    from paai.db import get_user_by_id
+    from paai.access import can_connect_google, is_owner
+    from paai.db import get_user_by_id, list_oauth_providers
 
     user = get_user_by_id(user_id)
     return {
@@ -189,6 +192,9 @@ async def me(user_id: uuid.UUID = Depends(current_user)):
         "email": user.email,
         "name": user.display_name,
         "connected_mailboxes": list_oauth_providers(user_id),
+        "can_connect_google": can_connect_google(user.email),
+        "is_owner": is_owner(user.email),
+        "owner_email": settings.owner_email,
     }
 
 @router.get("/connect/{provider}/start")
@@ -196,6 +202,17 @@ async def connect_start(provider: str, user_id: uuid.UUID = Depends(current_user
     if provider not in MAILBOX_SCOPES:
         raise HTTPException(status_code=400, detail="Unsupported provider")
 
+    if provider == "google":
+        user = get_user_by_id(user_id)
+        if not can_connect_google(user.email if user else None):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "google_tester_required",
+                    "message": "Gmail access is limited to approved testers.",
+                },
+            )
+        
     verifier, challenge = generate_pkce()
     response = RedirectResponse(url="about:blank")
     state = issue_state(

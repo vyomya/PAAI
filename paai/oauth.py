@@ -43,8 +43,9 @@ MAILBOX_SCOPES = {
     "microsoft": [
         "offline_access",
         "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.ReadWrite",      # drafts
+        "https://graph.microsoft.com/Mail.ReadWrite",
         "https://graph.microsoft.com/Calendars.Read",
+        "https://graph.microsoft.com/Calendars.ReadWrite",
     ],
 }
 
