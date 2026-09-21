@@ -24,6 +24,7 @@ from paai.routes_profile import router as profile_router
 from paai.deps import current_user, require_mailbox
 from fastapi.middleware.cors import CORSMiddleware
 from paai.config import settings
+from paai.routes_access import router as access_router
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ app = FastAPI(title="PAAI", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(sessions_router)
 app.include_router(profile_router)
+app.include_router(access_router)
 
 app.add_middleware(
     CORSMiddleware,

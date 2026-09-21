@@ -65,7 +65,16 @@ export type Me = {
   email: string;
   name: string | null;
   connected_mailboxes: string[];
+  can_connect_google: boolean;
+  is_owner: boolean;
+  owner_email: string;
 };
+
+export const requestGoogleAccess = (note?: string) =>
+  request<{ status: string; email: string; message: string }>(
+    "/access/google/request",
+    { method: "POST", body: JSON.stringify({ note: note ?? null }) }
+  );
 
 export type PlanStep = {
   agent: string;

@@ -1,14 +1,10 @@
 """
-Email provider interface — the Phase 6 hook.
+Email and calendar provider interfaces, plus the registry that picks one.
 
-Gmail is the only implementation today. Outlook arrives in Phase 6 via
-Microsoft Graph. Defining the interface now costs nothing and means Gmail gets
-written against it rather than retrofitted into it later.
-
-The agents never import GmailProvider directly. They call get_provider(user_id),
-which looks up the user's oauth_connections row and returns whichever provider
-they actually connected. That is the whole point: adding Outlook becomes a new
-class plus one line in the registry, not a rewrite of summarizer_agent.
+The agents never import GmailProvider or OutlookProvider. They call
+get_email_provider(), which looks up the user's oauth_connections row and
+returns whichever provider they actually connected. Adding a third provider is
+a new class plus one branch here.
 """
 import uuid
 from abc import ABC, abstractmethod
@@ -19,7 +15,7 @@ from datetime import datetime
 @dataclass
 class EmailMessage:
     """
-    Provider-neutral email. Gmail and Graph return wildly different shapes;
+    Provider-neutral email. Gmail and Graph return very different shapes;
     normalising here keeps provider details out of the agents.
     """
     id: str
@@ -34,8 +30,8 @@ class EmailMessage:
     labels: list[str] = field(default_factory=list)
 
     # Set by the provider, read by the guardrail layer. Email bodies are
-    # attacker-controlled text; anything derived from this content must not be
-    # allowed to write persistent state (preferences, history).
+    # attacker-controlled text: anything derived from this content must not be
+    # allowed to write persistent state (preferences, searchable history).
     is_untrusted: bool = True
 
 
@@ -51,8 +47,6 @@ class CalendarEvent:
 
 
 class EmailProvider(ABC):
-    """One implementation per provider. Constructed with a user's tokens."""
-
     name: str
 
     @abstractmethod
@@ -81,9 +75,8 @@ class EmailProvider(ABC):
         self, to: list[str], subject: str, body: str, reply_to_id: str | None = None
     ) -> str:
         """
-        Irreversible and outbound. Per the guardrail plan this must never be
-        reachable without explicit user confirmation — the model does not get
-        to approve its own send.
+        Irreversible and outbound. Must never be reachable without explicit
+        user confirmation — the model does not approve its own sends.
         """
         ...
 
@@ -108,37 +101,62 @@ class CalendarProvider(ABC):
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
+# Order matters only when a user has connected both, which is possible. Gmail
+# first preserves existing behaviour for anyone already set up.
+_EMAIL_ORDER = ("google", "outlook")
+
+
+def _connection(user_id: uuid.UUID, provider: str) -> dict | None:
+    from paai.db import get_oauth_connection, get_valid_access_token
+
+    conn = get_oauth_connection(user_id, provider)
+    if not conn:
+        return None
+    # Provider access tokens last about an hour. Refreshing here rather than at
+    # each call site is what stops the agents working in testing and breaking
+    # the next morning.
+    conn["access_token"] = get_valid_access_token(provider, user_id)
+    conn["user_id"] = user_id
+    return conn
+
+
 def get_email_provider(user_id: uuid.UUID) -> EmailProvider:
-    """
-    Returns whichever provider this user connected.
-
-    Phase 6 adds one branch here and nothing else changes upstream.
-    """
-    from paai.db import get_oauth_connection
-
-    conn = get_oauth_connection(user_id, "gmail")
-    if conn:
-        from paai.gmail import GmailProvider
-        return GmailProvider(conn)
-
-    # Phase 6:
-    # conn = get_oauth_connection(user_id, "outlook")
-    # if conn:
-    #     from paai.outlook import OutlookProvider
-    #     return OutlookProvider(conn)
+    for provider in _EMAIL_ORDER:
+        conn = _connection(user_id, provider)
+        if not conn:
+            continue
+        if provider == "google":
+            from paai.gmail import GmailProvider
+            return GmailProvider(conn)
+        if provider == "outlook":
+            from paai.outlook import OutlookProvider
+            return OutlookProvider(conn)
 
     raise RuntimeError(
-        f"No email provider connected for user {user_id}. "
-        "The user needs to connect a mailbox first."
+        "No mailbox connected. Connect one in settings before asking about email."
     )
 
 
 def get_calendar_provider(user_id: uuid.UUID) -> CalendarProvider:
-    from paai.db import get_oauth_connection
+    # Google grants mail and calendar in one consent, so a google connection
+    # implies calendar access. Same for Microsoft.
+    for provider in _EMAIL_ORDER:
+        conn = _connection(user_id, provider)
+        if not conn:
+            continue
+        if provider == "google":
+            from paai.calendar import GoogleCalendarProvider
+            return GoogleCalendarProvider(conn)
+        if provider == "outlook":
+            from paai.outlook import OutlookCalendarProvider
+            return OutlookCalendarProvider(conn)
 
-    conn = get_oauth_connection(user_id, "gmail")  # Google grants both in one consent
-    if conn:
-        from paai.calendar import GoogleCalendarProvider
-        return GoogleCalendarProvider(conn)
+    raise RuntimeError(
+        "No calendar connected. Connect a mailbox in settings first."
+    )
 
-    raise RuntimeError(f"No calendar provider connected for user {user_id}.")
+
+def connected_providers(user_id: uuid.UUID) -> list[str]:
+    """For the settings page and the 'no mailbox' banner."""
+    from paai.db import list_oauth_providers
+    return list_oauth_providers(user_id)

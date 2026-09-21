@@ -228,3 +228,31 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+class GoogleTester(Base):
+    """
+    Mirror of the Google console's test-user list, plus the requests queue.
+
+    Gmail scopes are restricted, so Google refuses consent for anyone not on
+    its own list. Keeping a copy here means the app can show a useful message
+    before sending the user to a 403, and the owner can approve without a
+    redeploy.
+    """
+
+    __tablename__ = "google_testers"
+    __table_args__ = (Index("ix_google_testers_status", "status"),)
+
+    email: Mapped[str] = mapped_column(String(320), primary_key=True)
+
+    # Nullable so the owner can pre-approve an address before that person has
+    # ever signed in.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    note: Mapped[str | None] = mapped_column(Text)
+
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

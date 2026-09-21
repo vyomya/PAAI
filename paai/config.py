@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    google_test_users: str = ""
+    owner_email: str = ""
 
     # ── Dev convenience ───────────────────────────────────────────────────
     # Email of the single seeded user, used until Phase 2 adds real auth.
