@@ -86,7 +86,7 @@ ok "built"
 # ── 3. Inspect the image before pushing ───────────────────────────────────────
 say "Verifying image contents"
 
-docker run --rm --env-file .env "$IMAGE" python -c "import paai.api" \
+docker run --rm --env-file .env "$IMAGE" python -c "import paai.api" 2>&1 \
   && ok "paai.api imports" \
   || die "paai.api does not import inside the image — check for missing files or deps"
 
