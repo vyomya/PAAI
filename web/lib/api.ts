@@ -16,7 +16,15 @@ export class MailboxRequiredError extends Error {
     super("No mailbox connected");
   }
 }
+export class QuotaError extends Error {}
+export type Usage = {
+    used: number; limit: number; remaining: number | null; unlimited: boolean;
+    used_last_7_days: number; cost_usd: number;
+    by_purpose: { purpose: string; tokens: number; calls: number }[];
+    by_model: { model: string; tokens: number; cost_usd: number }[];
+  };
 
+export const getUsage = () => request<Usage>("/usage");
 let refreshing: Promise<boolean> | null = null;
 
 async function refreshSession(): Promise<boolean> {
@@ -51,6 +59,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (res.status === 401) throw new AuthError("Session expired");
   }
   if (res.status === 428) throw new MailboxRequiredError();
+  if (res.status === 429) throw new QuotaError("Token limit reached");
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");

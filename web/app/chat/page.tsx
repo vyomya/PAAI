@@ -7,17 +7,24 @@ import Markdown from "@/components/Markdown";
 import {
   AuthError,
   MailboxRequiredError,
+  QuotaError,
   askAgent,
   getMe,
   getSession,
+  getUsage,
   listSessions,
   removeSession,
   type Me,
   type PlanStep,
   type SessionSummary,
+  type Usage,
 } from "@/lib/api";
 
 type Turn = { role: "you" | "assistant"; text: string; plan?: PlanStep[] };
+
+// Warn once the balance drops below this fraction of the limit, so the cutoff
+// is never a surprise mid-conversation.
+const LOW_QUOTA = 0.15;
 
 function ChatInner() {
   const router = useRouter();
@@ -31,6 +38,8 @@ function ChatInner() {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [quotaBlocked, setQuotaBlocked] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
 
@@ -42,9 +51,24 @@ function ChatInner() {
     listSessions().then(setSessions).catch(() => {});
   }, []);
 
+  const refreshUsage = useCallback(() => {
+    getUsage()
+      .then((u) => {
+        setUsage(u);
+        // Unblock automatically if the owner raised the limit.
+        if (!u.unlimited && u.remaining !== null && u.remaining > 0) {
+          setQuotaBlocked(false);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
-    if (me) refreshSessions();
-  }, [me, refreshSessions]);
+    if (me) {
+      refreshSessions();
+      refreshUsage();
+    }
+  }, [me, refreshSessions, refreshUsage]);
 
   // Load a conversation from the server whenever the URL points at one.
   // This is what makes navigating to settings and back non-destructive:
@@ -81,7 +105,7 @@ function ChatInner() {
 
   async function send(text?: string) {
     const query = (text ?? draft).trim();
-    if (!query || busy) return;
+    if (!query || busy || quotaBlocked) return;
 
     setDraft("");
     setError(null);
@@ -100,8 +124,20 @@ function ChatInner() {
         { role: "assistant", text: reply.response, plan: reply.plan },
       ]);
       refreshSessions();
+      // A turn can cost a lot, so re-read rather than estimating client-side.
+      refreshUsage();
     } catch (err) {
       if (err instanceof AuthError) return router.replace("/login");
+
+      if (err instanceof QuotaError) {
+        setQuotaBlocked(true);
+        // Drop the optimistic user turn — it never ran, and leaving it there
+        // implies an answer is coming.
+        setTurns((t) => t.slice(0, -1));
+        setDraft(query);
+        refreshUsage();
+        return;
+      }
       setError(
         err instanceof MailboxRequiredError
           ? "Connect a mailbox in settings before asking about email."
@@ -122,6 +158,13 @@ function ChatInner() {
 
   if (!me) return null;
   const noMailbox = me.connected_mailboxes.length === 0;
+
+  const lowQuota =
+    usage &&
+    !usage.unlimited &&
+    usage.remaining !== null &&
+    usage.remaining > 0 &&
+    usage.remaining < usage.limit * LOW_QUOTA;
 
   const rail = (
     <div className="rail-inner">
@@ -164,8 +207,31 @@ function ChatInner() {
         </ul>
       )}
 
+      {usage && !usage.unlimited && (
+        <div className="quota">
+          <div className="quota-bar">
+            <div
+              className="quota-fill"
+              style={{
+                width: `${Math.min(100, (usage.used / usage.limit) * 100)}%`,
+              }}
+              data-low={Boolean(lowQuota)}
+            />
+          </div>
+          <p className="quota-text">
+            {usage.used.toLocaleString()} of {usage.limit.toLocaleString()}{" "}
+            tokens
+          </p>
+        </div>
+      )}
+
       <style jsx>{`
-        .rail-inner { padding: 1.1rem 0.9rem; }
+        .rail-inner {
+          padding: 1.1rem 0.9rem;
+          display: flex;
+          flex-direction: column;
+          min-height: 100%;
+        }
         .new {
           width: 100%;
           padding: 0.7rem;
@@ -182,7 +248,7 @@ function ChatInner() {
           color: var(--ink-faint);
           padding: 0 0.25rem;
         }
-        ul { list-style: none; margin: 0; padding: 0; }
+        ul { list-style: none; margin: 0; padding: 0; flex: 1; }
         li {
           display: flex;
           align-items: center;
@@ -215,6 +281,30 @@ function ChatInner() {
         }
         li:hover .x { opacity: 1; }
         .x:hover { color: var(--alert); }
+
+        .quota {
+          margin-top: auto;
+          padding: 0.9rem 0.6rem 0.2rem;
+          border-top: 1px solid var(--rule);
+        }
+        .quota-bar {
+          height: 4px;
+          background: var(--sunk);
+          border-radius: 2px;
+          overflow: hidden;
+        }
+        .quota-fill {
+          height: 100%;
+          background: var(--agent);
+          border-radius: 2px;
+          transition: width 0.3s;
+        }
+        .quota-fill[data-low="true"] { background: var(--flag); }
+        .quota-text {
+          margin: 0.45rem 0 0;
+          font-size: 0.82rem;
+          color: var(--ink-faint);
+        }
       `}</style>
     </div>
   );
@@ -226,6 +316,20 @@ function ChatInner() {
           No mailbox connected. <a href="/settings">Connect one</a> to ask about
           email or calendar.
         </div>
+      )}
+
+      {quotaBlocked ? (
+        <div className="banner alert">
+          You&apos;ve used your full token allowance. Ask{" "}
+          {me.owner_email || "the owner"} to raise your limit to keep going.
+        </div>
+      ) : (
+        lowQuota && (
+          <div className="banner">
+            {usage!.remaining!.toLocaleString()} tokens left — roughly a handful
+            more questions.
+          </div>
+        )
       )}
 
       <div className="stream">
@@ -240,7 +344,7 @@ function ChatInner() {
                   "What are my free slots next week?",
                   "Don't put newsletters in my to-do list",
                 ].map((s) => (
-                  <button key={s} onClick={() => send(s)}>
+                  <button key={s} onClick={() => send(s)} disabled={quotaBlocked}>
                     {s}
                   </button>
                 ))}
@@ -311,11 +415,18 @@ function ChatInner() {
                 send();
               }
             }}
-            placeholder="Ask about your inbox…"
+            placeholder={
+              quotaBlocked
+                ? "Token limit reached"
+                : "Ask about your inbox…"
+            }
             rows={1}
-            disabled={busy}
+            disabled={busy || quotaBlocked}
           />
-          <button onClick={() => send()} disabled={busy || !draft.trim()}>
+          <button
+            onClick={() => send()}
+            disabled={busy || quotaBlocked || !draft.trim()}
+          >
             Send
           </button>
         </div>
@@ -328,6 +439,11 @@ function ChatInner() {
           background: var(--flag-wash);
           border-bottom: 1px solid var(--rule);
           font-size: 0.98rem;
+        }
+        .banner.alert {
+          background: var(--paper);
+          border-bottom-color: var(--alert);
+          color: var(--alert);
         }
         .stream {
           flex: 1;
@@ -359,7 +475,11 @@ function ChatInner() {
           border-radius: 8px;
           font-size: 1rem;
         }
-        .starters button:hover { border-color: var(--agent); color: var(--agent); }
+        .starters button:hover:not(:disabled) {
+          border-color: var(--agent);
+          color: var(--agent);
+        }
+        .starters button:disabled { opacity: 0.4; cursor: not-allowed; }
 
         article {
           display: grid;
@@ -445,6 +565,7 @@ function ChatInner() {
           line-height: 1.5;
         }
         textarea:focus { border-color: var(--agent); }
+        textarea:disabled { opacity: 0.6; }
         .composer button {
           padding: 0.7rem 1.4rem;
           border: 1px solid var(--ink);
@@ -464,6 +585,7 @@ function ChatInner() {
     </Shell>
   );
 }
+
 export default function ChatPage() {
   return (
     <Suspense fallback={null}>

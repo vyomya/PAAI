@@ -18,9 +18,11 @@ from paai.db import (
     upsert_preference, increment_interactions_since_seen,
     persist_decay,
 )
+from paai.usage import check_quota, set_session
 from paai.context import get_current_user
 import uuid
 from datetime import datetime
+from paai.llm import invoke
 
 
 # ── Classifier — LLM-based, replaces regex ───────────────────────────────────
@@ -44,7 +46,7 @@ def classify_message(text: str, recent_history: list = None) -> dict:
     )
 
     try:
-        response = llm.invoke(prompt).content
+        response = invoke(prompt, purpose="classifier", tier="cheap").content
         clean = re.sub(r'^```(?:json)?\n?', '', response).rstrip('`').strip()
         result = json.loads(clean)
         print(f"[CLASSIFIER] {result}")
@@ -90,7 +92,7 @@ def preference_node(state):
         user_input=state["user_input"]
     )
 
-    response = llm.invoke(prompt).content
+    response = 	invoke(prompt, purpose="preference", tier="cheap").content
     clean = re.sub(r'^```(?:json)?\n?', '', response).rstrip('`').strip()
 
     try:
@@ -141,7 +143,7 @@ def history_agent_node(state):
 
     tools_used = []
     for _ in range(5):  # history agent doesn't need many iterations
-        response = llm_with_tools.invoke(messages)
+        response = invoke(messages, purpose="history", tier="standard", with_tools=True)
         messages.append(response)
 
         if not response.tool_calls:
@@ -210,7 +212,7 @@ def planner_node(state):
         HumanMessage(content=state["user_input"])
     ]
 
-    content = llm.invoke(messages).content
+    content = invoke(messages, purpose="planner", tier="standard").content
     print(repr(content))
 
     # Try direct parse first
@@ -242,7 +244,7 @@ def planner_node(state):
                     "Return ONLY the JSON object, no other text."
                 ))
             ]
-            retry_content = llm.invoke(fix_messages).content
+            retry_content = invoke(fix_messages, purpose="planner", tier="standard").content
             json_match = re.search(r'\{.*\}', retry_content, re.DOTALL)
             if json_match:
                 plan = json.loads(json_match.group())
@@ -321,7 +323,7 @@ def create_agent_node(agent_name, system_prompt):
 
         tools_used = []
         for _ in range(10):
-            response = llm_with_tools.invoke(messages)
+            response = 	invoke(messages, purpose=f"agent:{agent_name}", tier="standard", with_tools=True)
             messages.append(response)
 
             if not response.tool_calls:
@@ -397,7 +399,7 @@ def step_evaluator_node(state):
 
     print(f"[EVALUATOR] Checking step goal: {step['outputs']}")
     print(f"[EVALUATOR] Step output preview: {state['step_output'][:200]}...")
-    output = llm.invoke(prompt).content
+    output = invoke(prompt, purpose="step_evaluator", tier="cheap").content
     print(output)
 
     if "true" in output.lower():
@@ -452,7 +454,7 @@ def final_evaluator_node(state):
         context=json.dumps(state['context']),
         indent=2
     )
-    verdict = llm.invoke(prompt).content.lower()
+    verdict = invoke(prompt, purpose="final_eval", tier="cheap").content.lower()
     plan_summary = [step["agent"] for step in state["plan"]["steps"]]
 
     save_session(
@@ -486,7 +488,7 @@ def final_evaluator_node(state):
             assistant_output=state["step_output"][:1000],
             existing_preferences=prefs_text
         )
-        extractor_response = llm.invoke(extractor_prompt).content
+        extractor_response = invoke(extractor_prompt, purpose="extractor", tier="cheap").content
         extractor_clean = re.sub(r'^```(?:json)?\n?', '', extractor_response).rstrip('`').strip()
         extractor_result = json.loads(extractor_clean)
 
@@ -552,10 +554,13 @@ def run_agent(user_query: str, user_id: uuid.UUID = None, session_id: str = None
     user_id is optional because it can also arrive via user_context() from the
     API layer. Explicit argument wins; context is the fallback.
     """
+    
     if user_id is None:
         user_id = get_current_user()   # raises if truly unscoped
 
+    check_quota(user_id)
     session_id = session_id or datetime.now().strftime("%Y%m%d%H%M%S")
+    set_session(session_id)
     message_history = load_messages(user_id, query=user_query, limit=10)
     preferences = load_preferences(user_id)
 

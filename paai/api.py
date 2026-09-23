@@ -11,9 +11,12 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 
+from fastapi.concurrency import run_in_threadpool
+from starlette.concurrency import run_in_threadpool
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
+from paai.usage import QuotaExceeded, summary
 
 from paai.graph import run_agent
 from paai.db import init_db, _engine
@@ -84,8 +87,16 @@ async def call_agent(
 
     try:
         result, session_id = await run_in_threadpool(_run)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Agent failed: {exc}")
+    except QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "quota_exceeded",
+                "message": str(exc),
+                "used": exc.used,
+                "limit": exc.limit,
+            },
+        )
 
     return AgentResponse(response=result, session_id=session_id)
 
@@ -112,6 +123,10 @@ async def readiness_check():
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
 
+
+@app.get("/usage")
+async def usage(user_id: uuid.UUID = Depends(current_user)):
+    return summary(user_id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

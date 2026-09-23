@@ -61,6 +61,7 @@ class User(Base):
     oauth_connections: Mapped[list["OAuthConnection"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    token_limit: Mapped[int | None] = mapped_column(Integer)
 
 
 # ── OAuth connections (Gmail today, Outlook in Phase 6) ───────────────────────
@@ -256,3 +257,38 @@ class GoogleTester(Base):
         DateTime(timezone=True), default=utcnow, nullable=False
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+class TokenUsage(Base):
+    """
+    One row per LLM call.
+
+    Per-call rather than per-turn so you can answer "what is actually
+    spending the money" — the answer is usually the agent nodes, not the
+    number of turns.
+    """
+
+    __tablename__ = "token_usage"
+    __table_args__ = (
+        Index("ix_token_usage_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(String(100), index=True)
+
+    model: Mapped[str] = mapped_column(String(60), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

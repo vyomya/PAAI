@@ -55,6 +55,9 @@ class Settings(BaseSettings):
 
     microsoft_client_id: str = ""
     microsoft_client_secret: str = ""
+    default_token_limit: int = 200_000
+    llm_cheap: str = "gpt-4o-mini"
+    llm_standard: str = "gpt-4o-mini"
 
 @lru_cache
 def get_settings() -> Settings:
