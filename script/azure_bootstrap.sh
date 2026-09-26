@@ -154,6 +154,10 @@ ENVVARS=(
   "FRONTEND_URL=$FRONTEND_URL"
   "BASE_URL=${FRONTEND_URL}/api"
   "DEV_MODE=false"
+  "OWNER_EMAIL=${OWNER_EMAIL:-}"
+  "DEFAULT_TOKEN_LIMIT=${DEFAULT_TOKEN_LIMIT:-200000}"
+  "LLM_CHEAP=${LLM_CHEAP:-gpt-4o-mini}"
+  "LLM_STANDARD=${LLM_STANDARD:-gpt-4o-mini}"
 )
 
 if az containerapp show -g "$RG" -n "$APP" &>/dev/null; then
