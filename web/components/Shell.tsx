@@ -36,6 +36,9 @@ export default function Shell({
           </Link>
           <Link href="/settings" data-active={path.startsWith("/settings")}>
             Settings
+            {me.pending_requests > 0 && (
+              <span className="pip">{me.pending_requests}</span>
+            )}
           </Link>
         </nav>
 
@@ -89,6 +92,20 @@ export default function Shell({
         }
         nav :global(a:hover) {
           color: var(--ink);
+        }
+        nav :global(.pip) {
+          display: inline-grid;
+          place-items: center;
+          min-width: 18px;
+          height: 18px;
+          margin-left: 0.4rem;
+          padding: 0 5px;
+          border-radius: 999px;
+          background: var(--flag);
+          color: var(--paper);
+          font-size: 0.72rem;
+          font-weight: 600;
+          vertical-align: middle;
         }
         .avatar {
           display: grid;

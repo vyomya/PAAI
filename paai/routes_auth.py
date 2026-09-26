@@ -183,18 +183,21 @@ async def logout(request: Request):
 
 @router.get("/auth/me")
 async def me(user_id: uuid.UUID = Depends(current_user)):
-    from paai.access import can_connect_google, is_owner
+    from paai.access import PENDING, can_connect_google, is_owner, list_requests
     from paai.db import get_user_by_id, list_oauth_providers
 
     user = get_user_by_id(user_id)
+    owner = is_owner(user.email)
+
     return {
         "id": str(user_id),
         "email": user.email,
         "name": user.display_name,
         "connected_mailboxes": list_oauth_providers(user_id),
         "can_connect_google": can_connect_google(user.email),
-        "is_owner": is_owner(user.email),
+        "is_owner": owner,
         "owner_email": settings.owner_email,
+        "pending_requests": len(list_requests(PENDING)) if owner else 0,
     }
 
 @router.get("/connect/{provider}/start")

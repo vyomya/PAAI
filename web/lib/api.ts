@@ -69,6 +69,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
 export type Me = {
   id: string;
   email: string;
@@ -77,6 +78,7 @@ export type Me = {
   can_connect_google: boolean;
   is_owner: boolean;
   owner_email: string;
+  pending_requests: number;
 };
 
 export const requestGoogleAccess = (note?: string) =>
@@ -163,3 +165,24 @@ export const disconnectMailbox = (provider: string) =>
 // Full-page navigations: OAuth needs the browser to follow redirects.
 export const loginUrl = (p: string) => `${API}/auth/${p}/login`;
 export const connectUrl = (p: string) => `${API}/connect/${p}/start`;
+
+
+export type TesterRequest = {
+  email: string;
+  status: string;
+  name: string | null;
+  note: string | null;
+  requested_at: string | null;
+  approved_at: string | null;
+};
+
+export const listTesterRequests = (status?: string) =>
+  request<{ requests: TesterRequest[] }>(
+    `/access/google/requests${status ? `?status=${status}` : ""}`
+  ).then((r) => r.requests);
+
+export const setTesterStatus = (email: string, status: string) =>
+  request<{ email: string; status: string; reminder: string | null }>(
+    "/access/google/status",
+    { method: "POST", body: JSON.stringify({ email, status }) }
+  );
