@@ -1,28 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "@/components/Shell";
 import {
   connectUrl,
   disconnectMailbox,
   getMe,
+  listTesterRequests,
   logout,
   requestGoogleAccess,
+  setTesterStatus,
   type Me,
+  type TesterRequest,
 } from "@/lib/api";
 
 const PROVIDERS = [
-  {
-    id: "google",
-    label: "Google",
-    detail: "Gmail and Google Calendar",
-  },
-  {
-    id: "microsoft",
-    label: "Microsoft",
-    detail: "Outlook mail and calendar",
-  },
+  { id: "google", label: "Google", detail: "Gmail and Google Calendar" },
+  { id: "microsoft", label: "Microsoft", detail: "Outlook mail and calendar" },
 ];
 
 type RequestState = "idle" | "sending" | "sent" | "error";
@@ -34,11 +29,25 @@ export default function SettingsPage() {
   const [requestState, setRequestState] = useState<RequestState>("idle");
   const [requestError, setRequestError] = useState<string | null>(null);
 
+  // Owner-only
+  const [testers, setTesters] = useState<TesterRequest[]>([]);
+  const [acting, setActing] = useState<string | null>(null);
+  const [reminder, setReminder] = useState<string | null>(null);
+
+  const refreshTesters = useCallback(() => {
+    listTesterRequests()
+      .then(setTesters)
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     getMe()
-      .then(setMe)
+      .then((m) => {
+        setMe(m);
+        if (m.is_owner) refreshTesters();
+      })
       .catch(() => router.replace("/login"));
-  }, [router]);
+  }, [router, refreshTesters]);
 
   async function signOut() {
     await logout();
@@ -55,14 +64,8 @@ export default function SettingsPage() {
     setRequestError(null);
     try {
       const result = await requestGoogleAccess();
-      // The endpoint is idempotent, so a second click on an existing request
-      // returns the current status rather than erroring.
       setRequestState("sent");
-      if (result.status === "approved") {
-        // Approved between page load and clicking — refresh so the Connect
-        // button appears without a manual reload.
-        setMe(await getMe());
-      }
+      if (result.status === "approved") setMe(await getMe());
     } catch (err) {
       setRequestState("error");
       setRequestError(
@@ -71,7 +74,22 @@ export default function SettingsPage() {
     }
   }
 
+  async function decide(email: string, status: "approved" | "denied") {
+    setActing(email);
+    try {
+      const result = await setTesterStatus(email, status);
+      setReminder(result.reminder ?? null);
+      refreshTesters();
+      setMe(await getMe());
+    } finally {
+      setActing(null);
+    }
+  }
+
   if (!me) return null;
+
+  const pending = testers.filter((t) => t.status === "pending");
+  const decided = testers.filter((t) => t.status !== "pending");
 
   return (
     <Shell me={me}>
@@ -79,6 +97,97 @@ export default function SettingsPage() {
         <div className="col">
           <h1>Settings</h1>
 
+          {/* ── Owner: tester queue ─────────────────────────────────────── */}
+          {me.is_owner && (
+            <section>
+              <h2>
+                Tester requests
+                {pending.length > 0 && (
+                  <span className="count">{pending.length}</span>
+                )}
+              </h2>
+              <p className="explain">
+                Approving here unlocks the Connect button in PAAI. You must{" "}
+                <strong>also</strong> add the address under Google Auth
+                Platform → Audience → Test users, or Google will still refuse
+                the consent.
+              </p>
+
+              {reminder && <p className="reminder">{reminder}</p>}
+
+              {pending.length === 0 && decided.length === 0 && (
+                <p className="none">No requests yet.</p>
+              )}
+
+              {pending.map((t) => (
+                <div className="row" key={t.email}>
+                  <span>
+                    <span className="label">{t.name || t.email}</span>
+                    <span className="detail mono">{t.email}</span>
+                    {t.requested_at && (
+                      <span className="detail">
+                        asked{" "}
+                        {new Date(t.requested_at).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                    )}
+                  </span>
+                  <span className="right">
+                    <button
+                      className="primary"
+                      disabled={acting === t.email}
+                      onClick={() => decide(t.email, "approved")}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="quiet"
+                      disabled={acting === t.email}
+                      onClick={() => decide(t.email, "denied")}
+                    >
+                      Deny
+                    </button>
+                  </span>
+                </div>
+              ))}
+
+              {decided.length > 0 && (
+                <details className="decided">
+                  <summary>{decided.length} already handled</summary>
+                  {decided.map((t) => (
+                    <div className="row" key={t.email}>
+                      <span>
+                        <span className="label">{t.name || t.email}</span>
+                        <span className="detail mono">{t.email}</span>
+                      </span>
+                      <span className="right">
+                        <span
+                          className={
+                            t.status === "approved" ? "badge" : "badge denied"
+                          }
+                        >
+                          {t.status}
+                        </span>
+                        {t.status !== "approved" && (
+                          <button
+                            className="quiet"
+                            disabled={acting === t.email}
+                            onClick={() => decide(t.email, "approved")}
+                          >
+                            Approve
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </details>
+              )}
+            </section>
+          )}
+
+          {/* ── Mailboxes ───────────────────────────────────────────────── */}
           <section>
             <h2>Mailboxes</h2>
             <p className="explain">
@@ -129,11 +238,10 @@ export default function SettingsPage() {
               <div className="note">
                 {requestState === "sent" ? (
                   <>
-                    <p className="note-head">Request sent</p>
+                    <p className="note-head">Request recorded</p>
                     <p>
-                      {me.owner_email || "The owner"} has been asked to approve
-                      this address. Once approved, refresh this page and the
-                      Connect button will work.
+                      Your address is on the approval list. Once approved,
+                      refresh this page and Connect will work.
                     </p>
                   </>
                 ) : (
@@ -142,12 +250,12 @@ export default function SettingsPage() {
                     <p>
                       Google limits apps to an approved tester list until they
                       complete verification, so PAAI can&apos;t read your Gmail
-                      yet. Request access and the owner can add you.
+                      yet.
                     </p>
                   </>
                 )}
 
-                <p className="mono">{me.email}</p>
+                <p className="mono box">{me.email}</p>
 
                 {requestState !== "sent" && (
                   <div className="note-actions">
@@ -156,9 +264,7 @@ export default function SettingsPage() {
                       onClick={submitRequest}
                       disabled={requestState === "sending"}
                     >
-                      {requestState === "sending"
-                        ? "Sending…"
-                        : "Request access"}
+                      {requestState === "sending" ? "Sending…" : "Request access"}
                     </button>
                   </div>
                 )}
@@ -175,6 +281,7 @@ export default function SettingsPage() {
             )}
           </section>
 
+          {/* ── Account ─────────────────────────────────────────────────── */}
           <section>
             <h2>Account</h2>
             <div className="row">
@@ -191,11 +298,7 @@ export default function SettingsPage() {
       </div>
 
       <style jsx>{`
-        .scroll {
-          flex: 1;
-          overflow-y: auto;
-          background: var(--panel);
-        }
+        .scroll { flex: 1; overflow-y: auto; background: var(--panel); }
         .col {
           max-width: 44rem;
           margin: 0 auto;
@@ -218,6 +321,20 @@ export default function SettingsPage() {
           font-size: 1.12rem;
           font-weight: 600;
           margin: 0 0 0.4rem;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .count {
+          display: inline-grid;
+          place-items: center;
+          min-width: 20px;
+          height: 20px;
+          padding: 0 6px;
+          border-radius: 999px;
+          background: var(--flag);
+          color: var(--paper);
+          font-size: 0.75rem;
         }
         .explain {
           color: var(--ink-soft);
@@ -225,6 +342,16 @@ export default function SettingsPage() {
           margin: 0 0 1.25rem;
           max-width: 40rem;
         }
+        .reminder {
+          margin: 0 0 1rem;
+          padding: 0.7rem 0.9rem;
+          background: var(--flag-wash);
+          border-radius: 6px;
+          font-size: 0.92rem;
+          color: var(--ink-soft);
+        }
+        .none { color: var(--ink-faint); margin: 0; }
+
         .row {
           display: flex;
           justify-content: space-between;
@@ -232,22 +359,15 @@ export default function SettingsPage() {
           gap: 1rem;
           padding: 0.9rem 0;
         }
-        .row + .row {
-          border-top: 1px solid var(--rule-soft);
-        }
-        .label {
-          display: block;
-        }
+        .row + .row { border-top: 1px solid var(--rule-soft); }
+        .label { display: block; }
         .detail {
           display: block;
           font-size: 0.92rem;
           color: var(--ink-soft);
         }
-        .right {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-        }
+        .right { display: flex; align-items: center; gap: 0.6rem; }
+
         .badge {
           font-size: 0.88rem;
           color: var(--agent);
@@ -255,10 +375,9 @@ export default function SettingsPage() {
           padding: 0.2rem 0.55rem;
           border-radius: 999px;
         }
-        .badge.pending {
-          color: var(--flag);
-          background: var(--flag-wash);
-        }
+        .badge.pending { color: var(--flag); background: var(--flag-wash); }
+        .badge.denied { color: var(--ink-faint); background: var(--sunk); }
+
         .quiet {
           padding: 0.45rem 0.9rem;
           border: 1px solid var(--rule);
@@ -269,9 +388,33 @@ export default function SettingsPage() {
           text-decoration: none;
           white-space: nowrap;
         }
-        .quiet:hover {
+        .quiet:hover:not(:disabled) {
           border-color: var(--agent);
           color: var(--agent);
+        }
+        .primary {
+          padding: 0.45rem 0.9rem;
+          border: 1px solid var(--ink);
+          border-radius: 6px;
+          background: var(--ink);
+          color: var(--paper);
+          font-size: 0.98rem;
+          white-space: nowrap;
+        }
+        .primary:disabled, .quiet:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+
+        .decided {
+          margin-top: 1rem;
+          border-top: 1px solid var(--rule);
+          padding-top: 0.75rem;
+        }
+        .decided summary {
+          cursor: pointer;
+          font-size: 0.92rem;
+          color: var(--ink-soft);
         }
 
         .note {
@@ -282,17 +425,13 @@ export default function SettingsPage() {
           border-radius: 8px;
           font-size: 0.95rem;
         }
-        .note p {
-          margin: 0 0 0.75rem;
-          color: var(--ink-soft);
-        }
-        .note-head {
-          color: var(--ink) !important;
-          font-weight: 600;
-        }
+        .note p { margin: 0 0 0.75rem; color: var(--ink-soft); }
+        .note-head { color: var(--ink) !important; font-weight: 600; }
         .mono {
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-          font-size: 0.92rem;
+          font-size: 0.9rem;
+        }
+        .box {
           color: var(--ink) !important;
           background: var(--paper);
           border: 1px solid var(--rule);
@@ -306,23 +445,7 @@ export default function SettingsPage() {
           flex-wrap: wrap;
           margin-bottom: 0.75rem;
         }
-        .primary {
-          padding: 0.45rem 0.9rem;
-          border: 1px solid var(--ink);
-          border-radius: 6px;
-          background: var(--ink);
-          color: var(--paper);
-          font-size: 0.98rem;
-          white-space: nowrap;
-        }
-        .primary:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-        .error {
-          color: var(--alert) !important;
-          font-size: 0.9rem;
-        }
+        .error { color: var(--alert) !important; font-size: 0.9rem; }
         .aside {
           margin: 0 !important;
           font-size: 0.9rem;
