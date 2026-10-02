@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     llm_cheap: str = "gpt-4o-mini"
     llm_standard: str = "gpt-4o-mini"
 
+    typesafe_api_key: str = ""
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

@@ -140,6 +140,7 @@ SECRETS=(
   "google-client-secret=$GOOGLE_CLIENT_SECRET"
   "ms-client-id=${MICROSOFT_CLIENT_ID:-unset}"
   "ms-client-secret=${MICROSOFT_CLIENT_SECRET:-unset}"
+  "typesafe-api-key=$TYPESAFE_API_KEY"
 )
 
 ENVVARS=(
@@ -158,6 +159,7 @@ ENVVARS=(
   "DEFAULT_TOKEN_LIMIT=${DEFAULT_TOKEN_LIMIT:-200000}"
   "LLM_CHEAP=${LLM_CHEAP:-gpt-4o-mini}"
   "LLM_STANDARD=${LLM_STANDARD:-gpt-4o-mini}"
+  "TYPESAFE_API_KEY=secretref:typesafe-api-key"
 )
 
 if az containerapp show -g "$RG" -n "$APP" &>/dev/null; then
