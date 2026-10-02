@@ -364,37 +364,17 @@ calendar_agent   = create_agent_node("calendar", calendar_prompt)
 def step_evaluator_node(state):
     step = state["plan"]["steps"][state["current_step"]]
 
-    prompt = step_evaluator_prompt.format(
-        user_input=state["user_input"],
-        outputs=step["outputs"],
-        step_output=state["step_output"],
-        context=json.dumps(state['context'])
-    )
     verdict = decisions.evaluate_step(
         user_input=state["user_input"],
         goal=step.get("outputs", ""),
         step_output=state["step_output"],
         context=json.dumps(state['context']),
     )
-    if verdict["approved"]:
-        return {"step_evaluation": {"approved": True, "issues": "", "repair": "continue"}}
-    else:
-        try:
-            json_match = re.search(r'\{.*?\}', output, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-                return {
-                    "step_evaluation": result,
-                    "current_step": state["current_step"],
-                    "iteration_count": state["iteration_count"]
-                }
-        except (json.JSONDecodeError, AttributeError):
-            print("[EVALUATOR] Parse error — approving to avoid loop")
-            return {
-            "step_evaluation": output,
-            "current_step": state["current_step"],
-            "iteration_count": state["iteration_count"]
-        }
+    return {
+        "step_evaluation": verdict,
+        "current_step": state["current_step"],
+        "iteration_count": state["iteration_count"],
+    }
 
 
 # ── Step Router ───────────────────────────────────────────────────────────────
