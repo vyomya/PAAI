@@ -18,6 +18,7 @@ from paai.db import (
     upsert_preference, increment_interactions_since_seen,
     persist_decay,
 )
+from paai import decisions
 from paai.usage import check_quota, set_session
 from paai.context import get_current_user
 import uuid
@@ -27,34 +28,7 @@ from paai.llm import invoke
 
 # ── Classifier — LLM-based, replaces regex ───────────────────────────────────
 def classify_message(text: str, recent_history: list = None) -> dict:
-    """
-    Returns dict with:
-      types: list of "task" | "preference" | "correction"
-      has_correction: bool
-      contradiction_strength: "none"|"weak"|"partial"|"absolute"
-    """
-    history_text = ""
-    if recent_history:
-        last_two = recent_history[-2:]
-        history_text = "\n".join(
-            f"{m['role'].upper()}: {m['content'][:300]}" for m in last_two
-        )
-
-    prompt = classifier_prompt.format(
-        recent_history=history_text or "No prior conversation.",
-        user_input=text
-    )
-
-    try:
-        response = invoke(prompt, purpose="classifier", tier="cheap").content
-        clean = re.sub(r'^```(?:json)?\n?', '', response).rstrip('`').strip()
-        result = json.loads(clean)
-        print(f"[CLASSIFIER] {result}")
-        return result
-    except Exception as e:
-        print(f"[CLASSIFIER] Parse error: {e} — defaulting to task")
-        return {"types": ["task"], "has_correction": False,
-                "contradiction_strength": "none", "reasoning": "fallback"}
+    return decisions.classify(text, recent_history)
 
 
 # ── AgentState ────────────────────────────────────────────────────────────────
@@ -390,37 +364,17 @@ calendar_agent   = create_agent_node("calendar", calendar_prompt)
 def step_evaluator_node(state):
     step = state["plan"]["steps"][state["current_step"]]
 
-    prompt = step_evaluator_prompt.format(
+    verdict = decisions.evaluate_step(
         user_input=state["user_input"],
-        outputs=step["outputs"],
+        goal=step.get("outputs", ""),
         step_output=state["step_output"],
-        context=json.dumps(state['context'])
+        context=json.dumps(state['context']),
     )
-
-    print(f"[EVALUATOR] Checking step goal: {step['outputs']}")
-    print(f"[EVALUATOR] Step output preview: {state['step_output'][:200]}...")
-    output = invoke(prompt, purpose="step_evaluator", tier="cheap").content
-    print(output)
-
-    if "true" in output.lower():
-        return {"step_evaluation": {"approved": True, "issues": "", "repair": "continue"}}
-    else:
-        try:
-            json_match = re.search(r'\{.*?\}', output, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-                return {
-                    "step_evaluation": result,
-                    "current_step": state["current_step"],
-                    "iteration_count": state["iteration_count"]
-                }
-        except (json.JSONDecodeError, AttributeError):
-            print("[EVALUATOR] Parse error — approving to avoid loop")
-            return {
-            "step_evaluation": output,
-            "current_step": state["current_step"],
-            "iteration_count": state["iteration_count"]
-        }
+    return {
+        "step_evaluation": verdict,
+        "current_step": state["current_step"],
+        "iteration_count": state["iteration_count"],
+    }
 
 
 # ── Step Router ───────────────────────────────────────────────────────────────
@@ -448,13 +402,13 @@ def step_router(state):
 def final_evaluator_node(state):
     user_id = state["user_id"]
     touched = state.get("touched_prefs", set())
-    prompt = evaluator_prompt.format(
+
+    verdict = decisions.evaluate_final(
         user_input=state["user_input"],
-        artifacts=json.dumps(state["artifacts"]),
-        context=json.dumps(state['context']),
-        indent=2
+        artifacts=json.dumps(state["artifacts"], indent=2),
+        final_output=state["step_output"],
     )
-    verdict = invoke(prompt, purpose="final_eval", tier="cheap").content.lower()
+
     plan_summary = [step["agent"] for step in state["plan"]["steps"]]
 
     save_session(
@@ -475,6 +429,7 @@ def final_evaluator_node(state):
             "system",
             f"[ARTIFACTS FROM PREVIOUS QUERY]\n{json.dumps(state['artifacts'], indent=2)}"
         )
+
     # Passive preference extraction — only if the user didn't explicitly correct a preference
     try:
         existing_prefs = load_preferences(user_id)
@@ -513,10 +468,7 @@ def final_evaluator_node(state):
     persist_decay(user_id)
 
     return {
-        "final_evaluation": {
-            "approved": "yes" in verdict,
-            "verdict": verdict
-        },
+        "final_evaluation": verdict,
         "touched_prefs": touched
     }
 
