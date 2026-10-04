@@ -479,7 +479,21 @@ def list_oauth_providers(user_id: uuid.UUID) -> list[str]:
                 )
             ).all()
         )
+class AccountConflict(Exception):
+    """
+    A login's email already belongs to an account created through a different
+    sign-in method, and the two cannot be linked safely.
 
+    `existing_provider` is how that account signs in, so the UI can say
+    "use Google instead" rather than a generic failure.
+    """
+
+    def __init__(self, email: str, existing_provider: str | None):
+        self.email = email
+        self.existing_provider = existing_provider
+        super().__init__(
+            f"{email} is already registered via {existing_provider or 'another method'}"
+        )
 def get_or_create_user_from_oauth(
     provider: str,
     subject: str,
@@ -510,14 +524,15 @@ def get_or_create_user_from_oauth(
         if user:
             return user.id
  
-        if email_verified:
-            user = s.scalar(select(User).where(User.email == email))
-            if user:
-                # First login via this provider for an existing account.
-                if not user.auth_provider:
-                    user.auth_provider = provider
-                    user.auth_subject = subject
-                return user.id
+        existing = s.scalar(select(User).where(User.email == email))
+        if existing:
+            if email_verified and not existing.auth_provider:
+                # Legacy row with no provider: claim it with this login.
+                existing.auth_provider = provider
+                existing.auth_subject = subject
+                return existing.id
+            raise AccountConflict(email, existing.auth_provider)
+
  
         user = User(
             email=email,
