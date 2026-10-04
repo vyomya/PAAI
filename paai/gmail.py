@@ -117,6 +117,7 @@ class GmailProvider(EmailProvider):
         after: datetime | None = None,
         before: datetime | None = None,
         query: str | None = None,
+        folder: str = "inbox",
     ) -> list[EmailMessage]:
         parts = []
         if query:
@@ -126,11 +127,14 @@ class GmailProvider(EmailProvider):
         if before:
             parts.append(f"before:{before.strftime('%Y/%m/%d')}")
         q = " ".join(parts)
+        label_map = {"inbox": ["INBOX"], "sent": ["SENT"], "all": None}
+        if folder not in label_map:
+            raise ValueError(f"unknown folder {folder!r}")
 
         listing = self._svc.users().messages().list(
             userId="me",
             q=q or None,
-            labelIds=["INBOX"],
+            labelIds=label_map[folder],
             maxResults=min(max_results, 100),
         ).execute()
 

@@ -107,30 +107,39 @@ class OutlookProvider(EmailProvider):
         after: datetime | None = None,
         before: datetime | None = None,
         query: str | None = None,
+        folder: str = "inbox",
     ) -> list[EmailMessage]:
+        paths = {
+            "inbox": "/me/mailFolders/inbox/messages",
+            "sent": "/me/mailFolders/sentitems/messages",
+            "all": "/me/messages",
+        }
+        if folder not in paths:
+            raise ValueError(f"unknown folder {folder!r}")
+
+        date_field = "sentDateTime" if folder == "sent" else "receivedDateTime"
+
         params = {
             "$top": min(max_results, 100),
-            "$orderby": "receivedDateTime desc",
+            "$orderby": f"{date_field} desc",
             "$select": "id,conversationId,subject,from,toRecipients,"
-                       "receivedDateTime,bodyPreview,isRead,parentFolderId",
+                       "receivedDateTime,sentDateTime,bodyPreview,isRead,parentFolderId",
         }
 
         filters = []
         if after:
-            filters.append(f"receivedDateTime ge {_iso(after)}")
+            filters.append(f"{date_field} ge {_iso(after)}")
         if before:
-            filters.append(f"receivedDateTime lt {_iso(before)}")
+            filters.append(f"{date_field} lt {_iso(before)}")
         if filters:
             params["$filter"] = " and ".join(filters)
 
         if query:
-            # $search and $filter cannot be combined in Graph. Search wins, and
-            # date filtering then happens client-side below.
             params.pop("$filter", None)
-            params.pop("$orderby", None)   # $search forbids $orderby too
+            params.pop("$orderby", None)
             params["$search"] = f'"{query}"'
 
-        data = self._get("/me/messages", params)
+        data = self._get(paths[folder], params)
         messages = [self._to_message(m) for m in data.get("value", [])]
 
         if query and (after or before):

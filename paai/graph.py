@@ -359,6 +359,30 @@ priority_agent   = create_agent_node("priority", priority_prompt)
 email_agent      = create_agent_node("email", emaildraft_prompt)
 calendar_agent   = create_agent_node("calendar", calendar_prompt)
 
+def _chat_reply(user_query: str, recent_history, session_id: str) -> str:
+    user_id = get_current_user()
+
+    history_text = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:400]}"
+        for m in (recent_history or [])[-6:]
+    )
+
+    prompt = (
+        "You are PAAI, an assistant that reads the user's email and calendar "
+        "and learns how they like things handled. You can fetch and summarise "
+        "mail, prioritise it, manage calendar events, draft replies, and "
+        "remember preferences. You cannot send mail.\n\n"
+        f"Conversation so far:\n{history_text or '(none)'}\n\n"
+        f"User: {user_query}\n\n"
+        "Answer directly and briefly. Do not invent anything about their "
+        "mailbox — you have not looked at it for this message."
+    )
+
+    reply = invoke(prompt, purpose="chat", tier="cheap").content.strip()
+
+    save_message(user_id, session_id, "user", user_query)
+    save_message(user_id, session_id, "assistant", reply)
+    return reply
 
 # ── Step Evaluator ────────────────────────────────────────────────────────────
 def step_evaluator_node(state):
@@ -537,7 +561,8 @@ def run_agent(user_query: str, user_id: uuid.UUID = None, session_id: str = None
         "iteration_count":  0,
         "touched_prefs":    set(),
     }
-
+    if "chat" in message_types:
+        return _chat_reply(user_query, message_history, session_id), session_id
     if "preference" in message_types and "task" not in message_types:
         result = pref_app.invoke(initial_state)
         increment_interactions_since_seen(

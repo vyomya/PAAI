@@ -101,9 +101,21 @@ def classify(user_input: str, recent_history: list[dict] | None = None) -> dict:
                 "intent": Choice(
                     instructions="What is the user asking for in this message",
                     criteria={
+                        "task": "Wants something done with their mail or calendar — "
+                                "fetch, summarise, schedule, draft",
+                        "preference": "Stating how they want things handled in future",
+                        "both": "States a preference and asks for something",
+                        "chat": "A general question, greeting, or question about the "
+                                "assistant itself — needs no mailbox or calendar access",
+                    },
+                ),
+                "intent": Choice(
+                    instructions="What is the user asking for in this message",
+                    criteria={
                         "task": "Wants something done — fetch, summarise, schedule, draft",
                         "preference": "Stating how they want things handled in future",
                         "both": "States a preference and asks for something in the same message",
+                        "chat": "A general question, greeting, or question about the assistant itself — needs no mailbox or calendar access",
                     },
                 ),
                 "is_correction": Noul(
@@ -129,8 +141,10 @@ def classify(user_input: str, recent_history: list[dict] | None = None) -> dict:
         _record(3, getattr(response, "usage", None))
 
         intent = response.answers["intent"].choice
-        types = {"task": ["task"], "preference": ["preference"],
-                 "both": ["preference", "task"]}[intent]
+        types = {"task": ["task"],
+            "preference": ["preference"],
+            "both": ["preference", "task"],
+            "chat": ["chat"]}[intent]
 
         is_correction = response.answers["is_correction"].noul >= 0.5
         strength = response.answers["contradiction_strength"].choice
@@ -149,7 +163,7 @@ def classify(user_input: str, recent_history: list[dict] | None = None) -> dict:
         print(f"[CLASSIFIER/jev] {result['types']} correction={is_correction}")
         return result
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[JEV] classify failed, falling back: {exc}")
         return _classify_via_llm(user_input, recent_history)
 
