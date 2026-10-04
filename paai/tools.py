@@ -68,6 +68,7 @@ def fetch_emails(raw: str) -> str:
             after=_parse_dt(args.get("after")),
             before=_parse_dt(args.get("before")),
             query=args.get("query"),
+            folder=args.get("folder", "inbox"),
         )
     except Exception as exc:
         return _fail(str(exc))
@@ -238,9 +239,10 @@ tools = [
         func=fetch_emails,
         description="""Fetches emails with full content in one call.
 Input JSON, all fields optional:
-{"max_results": 10, "after": "2026-09-01", "before": "2026-09-21", "query": "from:someone@example.com"}
+{"max_results": 10, "after": "2026-09-01", "before": "2026-09-21", "query": "from:someone@example.com", "folder": "inbox"}
 - after / before: ISO date or datetime. Use GetTime first to resolve relative dates.
 - query: provider search syntax, e.g. "from:x@y.com" or "subject:meeting".
+- folder: "inbox", "sent" or "all". Defaults to inbox.
 Returns id, subject, from, date, snippet and body (truncated) per email.
 Use GetEmailDetails only when you need the untruncated body of one email.""",
     ),
