@@ -12,7 +12,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine, select, text, update, func
+from sqlalchemy import create_engine, delete, select, text, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import sessionmaker
@@ -729,12 +729,12 @@ def delete_session(user_id: uuid.UUID, session_id: str):
     """
     with db_session() as s:
         s.execute(
-            sa_delete(Message).where(
+            delete(Message).where(
                 Message.user_id == user_id, Message.session_id == session_id
             )
         )
         s.execute(
-            sa_delete(Session).where(
+            delete(Session).where(
                 Session.user_id == user_id, Session.session_id == session_id
             )
         )
