@@ -103,7 +103,7 @@ class CalendarProvider(ABC):
 # ── Registry ──────────────────────────────────────────────────────────────────
 # Order matters only when a user has connected both, which is possible. Gmail
 # first preserves existing behaviour for anyone already set up.
-_EMAIL_ORDER = ("google", "outlook")
+_EMAIL_ORDER = ("google", "microsoft")
 
 
 def _connection(user_id: uuid.UUID, provider: str) -> dict | None:
@@ -128,7 +128,7 @@ def get_email_provider(user_id: uuid.UUID) -> EmailProvider:
         if provider == "google":
             from paai.gmail import GmailProvider
             return GmailProvider(conn)
-        if provider == "outlook":
+        if provider == "microsoft":
             from paai.outlook import OutlookProvider
             return OutlookProvider(conn)
 
@@ -147,7 +147,7 @@ def get_calendar_provider(user_id: uuid.UUID) -> CalendarProvider:
         if provider == "google":
             from paai.calendar import GoogleCalendarProvider
             return GoogleCalendarProvider(conn)
-        if provider == "outlook":
+        if provider == "microsoft":
             from paai.outlook import OutlookCalendarProvider
             return OutlookCalendarProvider(conn)
 
@@ -160,3 +160,15 @@ def connected_providers(user_id: uuid.UUID) -> list[str]:
     """For the settings page and the 'no mailbox' banner."""
     from paai.db import list_oauth_providers
     return list_oauth_providers(user_id)
+def _check_registry():
+    from paai.oauth import MAILBOX_SCOPES
+
+    unknown = set(_EMAIL_ORDER) - set(MAILBOX_SCOPES)
+    if unknown:
+        raise RuntimeError(
+            f"providers._EMAIL_ORDER has {sorted(unknown)} with no entry in "
+            "oauth.MAILBOX_SCOPES — connections are stored under the OAuth name."
+        )
+
+
+_check_registry()

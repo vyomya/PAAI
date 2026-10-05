@@ -15,6 +15,7 @@ you have no way to kill it. That is the part people skip.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import jwt
 from fastapi import HTTPException, Request, Response
@@ -28,6 +29,10 @@ REFRESH_TTL = timedelta(days=30)
 ACCESS_COOKIE = "paai_access"
 REFRESH_COOKIE = "paai_refresh"
 
+def refresh_cookie_path() -> str:
+    """The path for the refresh cookie, which is only sent to /auth endpoints."""
+    prefix = urlparse(settings.base_url).path.rstrip("/")
+    return f"{prefix}/auth"
 
 def _secret() -> str:
     if not settings.jwt_secret or len(settings.jwt_secret) < 32:
@@ -105,14 +110,18 @@ def set_auth_cookies(response: Response, access: str, refresh: str):
         REFRESH_COOKIE,
         refresh,
         max_age=int(REFRESH_TTL.total_seconds()),
-        path="/auth",          # only sent to refresh/logout endpoints
+        path=refresh_cookie_path(),          # only sent to refresh/logout endpoints
         **common,
     )
 
 
 def clear_auth_cookies(response: Response):
-    response.delete_cookie(ACCESS_COOKIE)
-    response.delete_cookie(REFRESH_COOKIE, path="/auth")
+    common = {"httponly": True, "secure": not settings.dev_mode, "samesite": "lax"}
+    response.delete_cookie(ACCESS_COOKIE, **common)
+    response.delete_cookie(REFRESH_COOKIE, path=refresh_cookie_path(), **common)
+    if refresh_cookie_path() != "/auth":
+        response.delete_cookie(REFRESH_COOKIE, path="/auth", **common)
+
 
 
 def read_access_token(request: Request) -> str | None:
