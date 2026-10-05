@@ -134,10 +134,24 @@ export type StoredPreference = {
 // ── Calls ────────────────────────────────────────────────────────────────────
 export const getMe = () => request<Me>("/auth/me");
 
+// The server runs in UTC; sending the browser's zone is what makes "today"
+// mean the user's today.
+const browserTimezone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export const askAgent = (query: string, sessionId?: string) =>
   request<AgentReply>("/agent", {
     method: "POST",
-    body: JSON.stringify({ query, session_id: sessionId ?? null }),
+    body: JSON.stringify({
+      query,
+      session_id: sessionId ?? null,
+      timezone: browserTimezone(),
+    }),
   });
 
 export const listSessions = () =>

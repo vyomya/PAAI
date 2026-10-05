@@ -18,25 +18,29 @@ from datetime import datetime, timedelta, timezone
 from langchain_core.tools import Tool
 
 from paai import db
-from paai.context import get_current_user
+from paai.context import get_current_user, get_user_timezone
 from paai.generic_tools import get_time
 from paai.providers import get_calendar_provider, get_email_provider
 
 
 def _parse_dt(value: str | None) -> datetime | None:
-    """Accepts ISO8601 with or without Z, or a bare YYYY-MM-DD."""
+    """
+    Accepts ISO8601 with or without Z/offset, or a bare YYYY-MM-DD.
+
+    Values without an offset are read in the user's timezone, not UTC: when
+    the model asks for "2026-10-03" it means the user's October 3rd.
+    """
     if not value:
         return None
+    tz = get_user_timezone()
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=tz)
     except ValueError:
         try:
-            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=tz)
         except ValueError:
             return None
-
-
 def _args(raw: str) -> dict:
     if not raw or not raw.strip():
         return {}
@@ -229,9 +233,9 @@ tools = [
         name="GetTime",
         func=get_time,
         description=(
-            "Gets the current date and time. Call this before any date-relative "
-            "request ('today', 'next week') so you resolve dates correctly. "
-            "Input: {}"
+            "Gets the current date, time and timezone of the user. Call this "
+            "before any date-relative request ('today', 'next week') so you "
+            "resolve dates correctly. Input: {}"
         ),
     ),
     Tool(
