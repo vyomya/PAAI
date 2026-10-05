@@ -28,6 +28,7 @@ from paai.auth import (
 from paai.access import can_connect_google
 from paai.config import settings
 from paai.db import (
+    AccountConflict,
     delete_oauth_connection,
     get_or_create_user_from_oauth,
     list_oauth_providers,
@@ -124,13 +125,24 @@ async def auth_callback(
     if not info["email"]:
         raise HTTPException(status_code=400, detail="Provider returned no email")
 
-    user_id = get_or_create_user_from_oauth(
-        provider=provider,
-        subject=info["subject"],
-        email=info["email"],
-        email_verified=info["email_verified"],
-        display_name=info.get("name"),
-    )
+    try:
+        user_id = get_or_create_user_from_oauth(
+            provider=provider,
+            subject=info["subject"],
+            email=info["email"],
+            email_verified=info["email_verified"],
+            display_name=info.get("name"),
+        )
+    except AccountConflict as exc:
+        # Send the person back with a reason the landing page can show,
+        # rather than a JSON error on the API domain.
+        from urllib.parse import urlencode
+
+        query = urlencode(
+            {"error": "account_exists", "provider": exc.existing_provider or ""}
+        )
+        response.headers["location"] = f"{settings.frontend_url}/?{query}"
+        return response
 
     access = mint_access_token(user_id)
     refresh, jti, expires_at = mint_refresh_token(user_id)
@@ -183,18 +195,18 @@ async def logout(request: Request):
 
 @router.get("/auth/me")
 async def me(user_id: uuid.UUID = Depends(current_user)):
-    from paai.access import PENDING, can_connect_google, is_owner, list_requests
+    from paai.access import PENDING, can_connect_google, is_owner_user, list_requests
     from paai.db import get_user_by_id, list_oauth_providers
 
     user = get_user_by_id(user_id)
-    owner = is_owner(user.email)
+    owner = is_owner_user(user)
 
     return {
         "id": str(user_id),
         "email": user.email,
         "name": user.display_name,
         "connected_mailboxes": list_oauth_providers(user_id),
-        "can_connect_google": can_connect_google(user.email),
+        "can_connect_google": can_connect_google(user),
         "is_owner": owner,
         "owner_email": settings.owner_email,
         "pending_requests": len(list_requests(PENDING)) if owner else 0,
@@ -207,7 +219,7 @@ async def connect_start(provider: str, user_id: uuid.UUID = Depends(current_user
 
     if provider == "google":
         user = get_user_by_id(user_id)
-        if not can_connect_google(user.email if user else None):
+        if not can_connect_google(user):    
             raise HTTPException(
                 status_code=403,
                 detail={

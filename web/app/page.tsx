@@ -11,8 +11,21 @@ import { getMe, loginUrl } from "@/lib/api";
 export default function Home() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    // Set by the API when a login could not be completed safely.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "account_exists") {
+      const via = params.get("provider");
+      const name = via ? via.charAt(0).toUpperCase() + via.slice(1) : null;
+      setNotice(
+        name
+          ? `That email already has a PAAI account. Sign in with ${name} instead.`
+          : "That email already has a PAAI account. Sign in the way you did before."
+      );
+    }
+
     getMe()
       .then(() => router.replace("/chat"))
       .catch(() => setChecking(false));
@@ -33,7 +46,7 @@ export default function Home() {
           PAAI reads your mail and calendar, works out what actually needs your
           attention, and leaves a record of every step it took to get there.
         </p>
-
+        {notice && <p className="notice">{notice}</p>}
         <div className="actions">
           <a className="primary" href={loginUrl("google")}>
             Continue with Google
@@ -95,6 +108,14 @@ export default function Home() {
           color: var(--ink-soft);
           max-width: 46ch;
           margin: 0 0 2.5rem;
+        }
+        .notice {
+          margin: 0 0 1.5rem;
+          padding: 0.8rem 1rem;
+          border: 1px solid var(--flag);
+          border-radius: 8px;
+          color: var(--ink);
+          max-width: 46ch;
         }
         .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
         .primary, .secondary {

@@ -100,13 +100,11 @@ def check_quota(user_id: uuid.UUID):
     The owner is exempt — you should not be able to lock yourself out of your
     own app while testing it.
     """
-    from paai.access import is_owner
+    from paai.access import is_owner_user
     from paai.db import get_user_by_id
 
-    user = get_user_by_id(user_id)
-    if user and is_owner(user.email):
+    if is_owner_user(get_user_by_id(user_id)):
         return
-
     limit = user_limit(user_id)
     if limit <= 0:          # 0 or negative means unlimited
         return

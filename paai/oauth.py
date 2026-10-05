@@ -224,7 +224,7 @@ async def fetch_userinfo(provider: str, access_token: str) -> dict:
         "email": email,
         # Graph does not expose a verification flag; a tenant-issued address is
         # verified by definition, so treat it as such.
-        "email_verified": True,
+        "email_verified": False,
         "name": data.get("displayName"),
     }
 

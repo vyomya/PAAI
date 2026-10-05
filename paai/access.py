@@ -28,24 +28,47 @@ APPROVED = "approved"
 DENIED = "denied"
 
 
+# Sign-in providers whose email claim is proof of ownership. Google returns a
+# real email_verified flag. Microsoft does not: with the multi-tenant endpoint,
+# a tenant admin can put any address in `mail`. See oauth.fetch_userinfo.
+VERIFIED_EMAIL_PROVIDERS = frozenset({"google"})
+
+
 def is_owner(email: str | None) -> bool:
+    """Email comparison only. Use is_owner_user() for access decisions."""
     if not email or not settings.owner_email:
         return False
     return email.lower() == settings.owner_email.lower()
 
 
-def can_connect_google(email: str | None) -> bool:
+def is_owner_user(user: User | None) -> bool:
     """
-    True when this address has been approved.
+    Owner check for authorization.
+
+    Matching OWNER_EMAIL is not enough on its own: the account must also sign
+    in through a provider that verifies email, or anyone able to put the
+    owner's address on a Microsoft account would get the admin endpoints.
+    """
+    return bool(
+        user
+        and user.auth_provider in VERIFIED_EMAIL_PROVIDERS
+        and is_owner(user.email)
+    )
+
+
+def can_connect_google(user: User | None) -> bool:
+    """
+    True when this user's address has been approved.
 
     The owner is always allowed: locking yourself out of your own app because
     you forgot to add yourself is a silly failure mode.
     """
-    if not email:
+    if not user or not user.email:
         return False
-    if is_owner(email):
+    if is_owner_user(user):
         return True
-
+    email = user.email
+    
     with db_session() as s:
         row = s.scalar(
             select(GoogleTester).where(GoogleTester.email == email.lower())

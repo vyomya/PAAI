@@ -15,7 +15,7 @@ from paai.access import (
     APPROVED,
     DENIED,
     PENDING,
-    is_owner,
+    is_owner_user,
     list_requests,
     remove,
     request_access,
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/access", tags=["access"])
 
 def _require_owner(user_id: uuid.UUID) -> str:
     user = get_user_by_id(user_id)
-    if not user or not is_owner(user.email):
+    if not is_owner_user(user):
         # 404 rather than 403: no reason to confirm these endpoints exist to
         # anyone who is not the owner.
         raise HTTPException(status_code=404, detail="Not found")
