@@ -59,7 +59,7 @@ app.add_middleware(
 class AgentRequest(BaseModel):
     query: str
     session_id: str | None = None
-
+    timezone: str | None = None
 
 class AgentResponse(BaseModel):
     response: str
@@ -82,7 +82,7 @@ async def call_agent(
     from starlette.concurrency import run_in_threadpool
 
     def _run():
-        with user_context(user_id):
+        with user_context(user_id, timezone=request.timezone):
             return run_agent(request.query, session_id=request.session_id)
 
     try:
