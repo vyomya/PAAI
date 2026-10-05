@@ -85,7 +85,7 @@ class OAuthConnection(Base):
         nullable=False, index=True,
     )
 
-    provider: Mapped[str] = mapped_column(String(30), nullable=False)  # gmail | outlook
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
     provider_account_email: Mapped[str | None] = mapped_column(String(320))
 
     # Encrypted with Fernet — never store these in plaintext.
