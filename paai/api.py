@@ -86,7 +86,7 @@ async def call_agent(
             return run_agent(request.query, session_id=request.session_id)
 
     try:
-        result, session_id = await run_in_threadpool(_run)
+        result, session_id, plan = await run_in_threadpool(_run)
     except QuotaExceeded as exc:
         raise HTTPException(
             status_code=429,
@@ -98,7 +98,7 @@ async def call_agent(
             },
         )
 
-    return AgentResponse(response=result, session_id=session_id)
+    return AgentResponse(response=result, session_id=session_id,plan=plan)
 
 
 @app.get("/health")

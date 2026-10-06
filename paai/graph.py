@@ -47,6 +47,7 @@ class AgentState(TypedDict):
     final_evaluation: dict
     iteration_count: int
     touched_prefs: set
+    step_log: List[dict]
 
 # ── Preference Agent ──────────────────────────────────────────────────────────
 def preference_node(state):
@@ -396,10 +397,16 @@ def step_evaluator_node(state):
         step_output=state["step_output"],
         context=json.dumps(state['context']),
     )
+    log_entry = {
+        "step_id": step["id"],
+        "approved": bool(verdict.get("approved")),
+        "issues": verdict.get("issues", ""),
+    }
     return {
         "step_evaluation": verdict,
         "current_step": state["current_step"],
         "iteration_count": state["iteration_count"],
+        "step_log": [*(state.get("step_log") or []), log_entry],
     }
 
 
@@ -525,6 +532,33 @@ task_graph.add_conditional_edges("step_evaluator", step_router)
 task_graph.add_edge("final_evaluator", END)
 task_app = task_graph.compile()
 
+def build_plan_ledger(plan: dict, step_log: list[dict]) -> list[dict]:
+    """
+    Shape the plan for the UI: one row per planned step with how it went.
+
+      done     approved on the first attempt
+      retried  approved after one or more failed attempts
+      failed   never approved (retries exhausted)
+      skipped  never ran, because an earlier step exhausted its retries
+    """
+    ledger = []
+    for step in (plan or {}).get("steps", []):
+        attempts = [e for e in step_log if e["step_id"] == step["id"]]
+        outputs = step.get("outputs") or [""]
+        row = {
+            "agent": step.get("agent", ""),
+            "description": outputs[0] if isinstance(outputs, list) else str(outputs),
+        }
+        if not attempts:
+            row.update(status="failed", note="Skipped — an earlier step failed.")
+        elif attempts[-1]["approved"]:
+            row["status"] = "done" if len(attempts) == 1 else "retried"
+            if len(attempts) > 1:
+                row["note"] = f"Passed after {len(attempts) - 1} retry(ies)."
+        else:
+            row.update(status="failed", note=attempts[-1].get("issues") or None)
+        ledger.append(row)
+    return ledger
 
 def run_agent(user_query: str, user_id: uuid.UUID = None, session_id: str = None):
     """
@@ -561,34 +595,37 @@ def run_agent(user_query: str, user_id: uuid.UUID = None, session_id: str = None
         "final_evaluation": {},
         "iteration_count":  0,
         "touched_prefs":    set(),
+        "step_log":         [],
     }
     if "chat" in message_types:
-        return _chat_reply(user_query, message_history, session_id), session_id
+        return _chat_reply(user_query, message_history, session_id), session_id, []
     if "preference" in message_types and "task" not in message_types:
         result = pref_app.invoke(initial_state)
         increment_interactions_since_seen(
             user_id, reinforced_keys=result.get("touched_prefs", set())
         )
         persist_decay(user_id)
-        return result["step_output"], session_id
+        return result["step_output"], session_id, []
 
     elif "preference" in message_types and "task" in message_types:
         pref_result = pref_app.invoke(initial_state)
         initial_state["preferences"] = load_preferences(user_id)
         initial_state["touched_prefs"] = pref_result.get("touched_prefs", set())
         result = task_app.invoke(initial_state)
-        return f"{pref_result['step_output']}\n\n{result['step_output']}", session_id
+        ledger = build_plan_ledger(result.get("plan"), result.get("step_log") or [])
+        return f"{pref_result['step_output']}\n\n{result['step_output']}", session_id, ledger
 
     else:
         result = task_app.invoke(initial_state)
-        return result["step_output"], session_id
+        ledger = build_plan_ledger(result.get("plan"), result.get("step_log") or [])
+        return result["step_output"], session_id, ledger
 
 if __name__ == "__main__":
     import os
-    from user_context import user_context
+    from paai.context import user_context
 
     dev_user = uuid.UUID(os.environ["DEV_USER_ID"])
     user_query = input("Enter your query: ")
     with user_context(dev_user):
-        response, _ = run_agent(user_query)
+        response, _, _ = run_agent(user_query)
     print(response)
