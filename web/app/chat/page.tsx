@@ -42,7 +42,7 @@ function ChatInner() {
   const [quotaBlocked, setQuotaBlocked] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
-
+  const createdHere = useRef<string | null>(null);
   useEffect(() => {
     getMe().then(setMe).catch(() => router.replace("/login"));
   }, [router]);
@@ -77,6 +77,11 @@ function ChatInner() {
     if (!urlSession) {
       setTurns([]);
       setSessionId(undefined);
+      return;
+    }
+    if (urlSession === createdHere.current) {
+      // We just created this conversation; what's on screen is already current.
+      createdHere.current = null;
       return;
     }
     getSession(urlSession)
@@ -117,6 +122,7 @@ function ChatInner() {
       const reply = await askAgent(query, sessionId);
       setSessionId(reply.session_id);
       if (!urlSession) {
+        createdHere.current = reply.session_id;
         router.replace(`/chat?s=${reply.session_id}`, { scroll: false });
       }
       setTurns((t) => [
