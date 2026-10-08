@@ -161,7 +161,10 @@ For each signal found, determine:
 - rule: clear instruction for the agent
 - scope: which agent this applies to ("global" | "summarizer_agent" | "priority_agent" | "email_agent" | "calendar_agent")
 - confidence: 0.0-1.0 (how certain you are this is a real preference, not a one-off request)
-- source: "implicit" (inferred) or "correction" (user corrected output)
+- source: "explicit" if the user directly tells you how something should be handled from now on
+  ("set follow-ups on job applications as high priority", "always put interviews first",
+  "never show me promotions"); "correction" if they are correcting the previous answer;
+  otherwise "implicit" (inferred from what they asked for)
 - contradiction: true/false (does this contradict an existing saved preference?)
 - contradiction_strength: "none" | "weak" | "partial" | "absolute"
 

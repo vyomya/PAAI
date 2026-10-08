@@ -264,11 +264,13 @@ def create_agent_node(agent_name, system_prompt):
         all_prefs = state.get("preferences", {})
         scoped_prefs = {
             k: v for k, v in all_prefs.items()
-            if v.get("scope") in ("global", agent_name)
+            if v.get("scope") in ("global", agent_name, f"{agent_name}_agent")
         }
         if scoped_prefs:
             hard_rules  = [v["rule"] for v in scoped_prefs.values()
-                           if v["confidence"] >= 0.7 and v.get("reinforcement_count", 1) >= 2]
+                           if v["confidence"] >= 0.7 and (
+                               v.get("reinforcement_count", 1) >= 2
+                               or v.get("source") == "explicit")]
             soft_rules  = [v["rule"] for v in scoped_prefs.values()
                            if v not in hard_rules and v["confidence"] >= 0.5]
             pref_lines  = []
@@ -491,12 +493,17 @@ def final_evaluator_node(state):
 
         for signal in extractor_result.get("signals", []):
             if signal.get("confidence", 0) >= 0.50:
+                # The extractor only sees the user's own words (see the prompt),
+                # so a direct instruction it labels "explicit" is safe to trust.
+                source = signal.get("source", "implicit")
+                if source not in ("explicit", "implicit", "correction"):
+                    source = "implicit"
                 upsert_preference(
                     user_id,
                     category=signal["category"],
                     rule=signal["rule"],
                     scope=signal.get("scope", "global"),
-                    source=signal.get("source", "implicit"),
+                    source=source,
                     contradiction=signal.get("contradiction", False),
                     contradiction_strength=signal.get("contradiction_strength", "none")
                 )
