@@ -38,7 +38,7 @@ MAILBOX_SCOPES = {
     "google": [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.compose",   # drafts, not send
-        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
     ],
     "microsoft": [
         "offline_access",

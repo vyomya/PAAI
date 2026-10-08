@@ -174,7 +174,44 @@ def fetch_calendar_events(raw: str) -> str:
         for e in events
     ], indent=2)
 
+def create_calendar_event(raw: str) -> str:
+    """
+    Adds an event to the user's own calendar.
 
+    Deliberately takes no attendees. Inviting people is outbound — Graph mails
+    invitations as soon as an event with attendees is created — and a model
+    that has just read a stranger's email must not be able to send invites on
+    the user's behalf. Personal calendar entries are reversible and stay
+    private.
+    """
+    args = _args(raw)
+    title = (args.get("title") or args.get("summary") or "").strip()
+    start = _parse_dt(args.get("start"))
+    end = _parse_dt(args.get("end"))
+    if not title:
+        return _fail("title is required")
+    if not start:
+        return _fail("start is required (ISO datetime)")
+    if not end:
+        end = start + timedelta(hours=1)
+    if end <= start:
+        return _fail("end must be after start")
+
+    try:
+        provider = get_calendar_provider(get_current_user())
+        event_id = provider.create_event(
+            title=title, start=start, end=end, location=args.get("location")
+        )
+    except Exception as exc:
+        return _fail(str(exc))
+
+    return json.dumps({
+        "status": "created",
+        "event_id": event_id,
+        "title": title,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    })
 # ── Conversation history ──────────────────────────────────────────────────────
 def get_recent_messages(raw: str) -> str:
     """
@@ -271,6 +308,14 @@ Sending is never automatic — the user reviews and sends the draft themselves."
 Input JSON: {"time_min": "2026-09-21T00:00:00Z", "time_max": "2026-09-28T00:00:00Z"}
 Defaults to the next 7 days from now. Use GetTime first for relative ranges.
 Returns title, start, end, location, attendees and link per event.""",
+    ),
+    Tool(
+        name="CreateCalendarEvent",
+        func=create_calendar_event,
+        description="""Adds an event to the user's own calendar. Cannot invite anyone.
+Input JSON: {"title": "Dentist", "start": "2026-10-07T15:00:00", "end": "2026-10-07T16:00:00", "location": "optional"}
+Times without an offset are in the user's timezone. "end" defaults to one hour after "start".
+Use GetTime first for relative dates, and only create events the user explicitly asked for.""",
     ),
     Tool(
         name="SearchMessages",

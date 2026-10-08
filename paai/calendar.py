@@ -5,9 +5,9 @@ providers.get_calendar_provider() returns this for users with a "google"
 connection. Like GmailProvider, it never refreshes tokens itself: the
 connection dict it receives already holds a fresh access token.
 
-Scope note: oauth.MAILBOX_SCOPES requests calendar.readonly, so create_event
-will be refused by Google until that scope is widened to calendar.events (a
-restricted-scope change that forces every user to re-consent).
+Scope note: oauth.MAILBOX_SCOPES requests calendar.events. Connections made
+before that change only hold calendar.readonly, and create_event reports that
+the user needs to reconnect.
 """
 from datetime import date, datetime, time, timezone
 
@@ -110,8 +110,9 @@ class GoogleCalendarProvider(CalendarProvider):
         except HttpError as exc:
             if exc.resp is not None and exc.resp.status == 403:
                 raise RuntimeError(
-                    "Google refused to create the event: the connection only has "
-                    "read access to the calendar."
+                    "Google refused to create the event: this calendar was "
+                    "connected with read-only access. Reconnect Google in "
+                    "Settings to allow adding events."
                 ) from exc
             raise RuntimeError(f"Google Calendar create failed: {exc}") from exc
         return created["id"]
