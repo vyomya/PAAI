@@ -98,17 +98,8 @@ def classify(user_input: str, recent_history: list[dict] | None = None) -> dict:
         response = client.system_one(
             state=state,
             questions={
-                "intent": Choice(
-                    instructions="What is the user asking for in this message",
-                    criteria={
-                        "task": "Wants something done with their mail or calendar — "
-                                "fetch, summarise, schedule, draft",
-                        "preference": "Stating how they want things handled in future",
-                        "both": "States a preference and asks for something",
-                        "chat": "A general question, greeting, or question about the "
-                                "assistant itself — needs no mailbox or calendar access",
-                    },
-                ),
+                # (A duplicate "intent" key used to sit above this one; Python
+                # silently kept only the last, so this is the one that ran.)
                 "intent": Choice(
                     instructions="What is the user asking for in this message",
                     criteria={

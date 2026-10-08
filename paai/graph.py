@@ -209,7 +209,7 @@ def planner_node(state):
 
         # Ask LLM to fix itself
         if not plan:
-            print(f"[PLANNER] No JSON found, asking LLM to reformat...")
+            print("[PLANNER] No JSON found, asking LLM to reformat...")
             fix_messages = messages + [
                 AIMessage(content=content),
                 HumanMessage(content=(
@@ -231,6 +231,16 @@ def planner_node(state):
                     f"Original: {content}\nRetry: {retry_content}"
                 )
 
+    steps = [
+        st for st in (plan or {}).get("steps", [])
+        if isinstance(st, dict) and st.get("agent") in AGENT_NODES
+    ]
+    plan = {**(plan or {}), "steps": steps}
+    no_plan_output = (
+        "I couldn't work out how to handle that request. Could you rephrase it, "
+        "or say whether it is about your email, calendar or an earlier answer?"
+    )
+
     print({"plan": plan, "current_step": 0, "artifacts": state.get("artifacts", {}), "iteration_count": 0})
 
     return {
@@ -239,7 +249,7 @@ def planner_node(state):
         "artifacts": state.get("artifacts", {}),
         "context": state.get("context", {}),
         "iteration_count": 0,
-        "step_output": ""
+        "step_output": "" if steps else no_plan_output,
     }
 
 
@@ -441,7 +451,7 @@ def final_evaluator_node(state):
         artifacts=json.dumps(state["artifacts"], indent=2),
         final_output=state["step_output"],
     )
-
+    print(f"[FINAL EVAL] approved={verdict.get('approved')} {verdict.get('verdict', '')[:200]}")
     plan_summary = [step["agent"] for step in state["plan"]["steps"]]
 
     save_session(
@@ -451,7 +461,7 @@ def final_evaluator_node(state):
         plan_summary=plan_summary,
         session_id=state["session_id"]
     )
-
+    
     save_message(user_id, state["session_id"], "user", state["user_input"])
     save_message(user_id, state["session_id"], "assistant", state["step_output"])
 
@@ -506,6 +516,7 @@ def final_evaluator_node(state):
 
 
 # ── Graphs ────────────────────────────────────────────────────────────────────
+AGENT_NODES = ("history_agent", "summarizer_agent", "priority_agent", "email_agent", "calendar_agent")
 
 # Preference-only graph
 pref_graph = StateGraph(AgentState)
@@ -525,8 +536,11 @@ task_graph.add_node("calendar_agent",   calendar_agent)
 task_graph.add_node("step_evaluator",   step_evaluator_node)
 task_graph.add_node("final_evaluator",  final_evaluator_node)
 task_graph.set_entry_point("planner")
-task_graph.add_conditional_edges("planner", lambda s: s["plan"]["steps"][0]["agent"])
-for agent in ["history_agent", "summarizer_agent", "priority_agent", "email_agent", "calendar_agent"]:
+task_graph.add_conditional_edges(
+    "planner",
+    lambda s: s["plan"]["steps"][0]["agent"] if s["plan"]["steps"] else "final_evaluator",
+)
+for agent in AGENT_NODES:
     task_graph.add_edge(agent, "step_evaluator")
 task_graph.add_conditional_edges("step_evaluator", step_router)
 task_graph.add_edge("final_evaluator", END)
