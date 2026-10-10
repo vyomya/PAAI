@@ -108,10 +108,21 @@ def history_agent_node(state):
     step = state["plan"]["steps"][state["current_step"]]
     goal = step["outputs"][0]
 
-    # ✅ Now uses tools — agent decides whether to search or get recent
+    request = (
+        f"Goal: {goal}\n\nUse your tools to retrieve the relevant conversation "
+        "history, then extract what the goal asks for."
+    )
+    issues = state.get("step_evaluation", {}).get("issues", "")
+    if issues:
+        request += (
+            f"\n\nYour previous attempt was rejected:\n{issues}\n"
+            "Try different search terms, or GetRecentMessages if you only used "
+            "SearchMessages. If it really isn't in the history, say so plainly."
+        )
+
     messages = [
         SystemMessage(content=history_agent_prompt),
-        HumanMessage(content=f"Goal: {goal}\n\nUse your tools to retrieve the relevant conversation history, then extract what the goal asks for.")
+        HumanMessage(content=request),
     ]
 
     tools_used = []
@@ -283,20 +294,24 @@ def create_agent_node(agent_name, system_prompt):
             enriched_prompt = system_prompt
 
         # Pass prior artifacts as context so agents don't re-fetch
+        artifacts = state.get("artifacts") or {}
+        earlier = {k: v for k, v in artifacts.items() if k != step["id"]}
         prior_context = ""
-        if state.get("artifacts"):
+        if earlier:
             prior_context = (
-                "\n\nPreviously computed data (use this directly, do NOT re-fetch):\n"
-                + json.dumps(state["artifacts"], indent=2)
+                "\n\nResults from earlier steps (use these directly, do NOT re-fetch them):\n"
+                + json.dumps(earlier, indent=2)
             )
 
         if issues:
             human_content = (
                 f"Your specific goal for this step: {step['outputs'][0]}\n"
                 f"{prior_context}\n\n"
-                f"Previous attempt failed with these issues:\n{issues}\n"
-                f"Previous bad output was:\n{state['step_output']}\n"
-                f"Please produce a corrected output addressing the issues above."
+                f"Your previous attempt at this step was rejected:\n{issues}\n\n"
+                f"Previous output:\n{artifacts.get(step['id'], '')}\n\n"
+                "Start again: call your tools to get the data you need (the previous "
+                "output may be missing or wrong), then produce a corrected output "
+                "that addresses the issues above."
             )
         else:
             human_content = (
