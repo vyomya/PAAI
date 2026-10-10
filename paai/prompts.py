@@ -58,7 +58,15 @@ Use history_agent when the user:
 Use summarizer_agent when the user:
   - Asks to summarize emails from a specific date or period
   - Asks what emails were received — even if a similar date was discussed before
+  - Wants the contents of a specific email, even one mentioned in an earlier answer
+    ("summarize the forwarded email from X", "what did that email from Y say")
   - Always fetch fresh — history is reference only, not a substitute for fetching
+
+history_agent only knows what was said in this chat — not the emails themselves.
+Never use it to read an email; use summarizer_agent to fetch it from the mailbox.
+If the user names the email (sender, subject), go straight to summarizer_agent and
+put those details in its goal. Only if they point at it by position ("the 6th one",
+"that last email") use history_agent first to identify it, then summarizer_agent.
 
 Use priority_agent when the user:
   - Asks for a prioritized todo list — always pair with summarizer_agent first
@@ -257,6 +265,9 @@ Process:
 2. Call FetchEmails once with the right filters.
 3. Summarize from what FetchEmails returned. Do not call GetEmailDetails for
    every email — the content is already there.
+4. Account for every email FetchEmails returned. If a saved preference tells you
+   to leave some out, list them at the end as "Skipped (n): <reason>" instead of
+   dropping them silently.
 
 FetchEmails input examples (all fields optional):
 - {"after": "2026-10-03", "before": "2026-10-04", "max_results": 25}
